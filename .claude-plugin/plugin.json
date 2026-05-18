@@ -1,0 +1,8 @@
+{
+  "name": "agentic-engineering",
+  "version": "0.1.0",
+  "description": "Self-improving engineering system: typed knowledge graph, falsifiability-gated specs, independent verification.",
+  "author": "GhostlyGawd",
+  "license": "MIT",
+  "repository": "https://github.com/GhostlyGawd/agentic-engineering"
+}

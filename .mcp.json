@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "agentic-graph": {
+      "command": "agentic-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}
