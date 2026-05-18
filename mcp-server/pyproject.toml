@@ -19,6 +19,7 @@ dev = [
 
 [project.scripts]
 agentic-mcp = "agentic_mcp.server:main"
+agentic-mcp-init = "agentic_mcp.init_project:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]
