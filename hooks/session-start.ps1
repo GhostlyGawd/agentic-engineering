@@ -30,7 +30,11 @@ function Read-GraphStats {
     if (-not (Test-Path -LiteralPath $dbPath)) {
         return @{ open_specs = 0; open_critical_findings = 0; db_present = $false }
     }
-    # Use the bundled Python CLI to query the graph. Avoid 2>&1 per machine notes.
+    # Use the bundled Python CLI to query the graph. Write the script to a
+    # temp .py file rather than passing via `python -c <string>` -- PowerShell
+    # 5.1's PSNativeCommandArgumentPassing strips embedded double-quotes when
+    # invoking native exes, so `-c` mode mangles any SQL literal containing
+    # quoted strings. Avoid 2>&1 per machine notes.
     $script = @"
 import json, sqlite3, sys
 p = sys.argv[1]
@@ -45,11 +49,17 @@ except Exception:
     crits = 0
 print(json.dumps({'open_specs': specs, 'open_critical_findings': crits, 'db_present': True}))
 "@
+    $tempPy = Join-Path $env:TEMP ("agentic-stats-" + [Guid]::NewGuid().ToString("N") + ".py")
     try {
-        $out = & python -c $script $dbPath
+        # Write UTF-8 without BOM via .NET, since Set-Content -Encoding utf8
+        # in PS5.1 emits a BOM that some Python configurations dislike at SOF.
+        [IO.File]::WriteAllText($tempPy, $script, (New-Object Text.UTF8Encoding $false))
+        $out = & python $tempPy $dbPath
         return ($out | ConvertFrom-Json)
     } catch {
         return @{ open_specs = 0; open_critical_findings = 0; db_present = $true; error = "$_" }
+    } finally {
+        Remove-Item -LiteralPath $tempPy -Force -ErrorAction SilentlyContinue
     }
 }
 

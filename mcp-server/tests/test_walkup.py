@@ -66,3 +66,40 @@ def test_closest_agentic_wins(scaffolded):
     payload = json.loads(out)
     assert str(closer) in payload["additionalContext"]
     assert str(grandparent) not in payload["additionalContext"].replace(str(closer), "")
+
+
+def test_graph_stats_rendered_when_db_exists(scaffolded):
+    """Regression for Phase 0 dogfood bug F-8adec081: when graph.db exists with
+    real rows, the hook must render the integer counts, not empty strings.
+    The Phase 0 walkup tests only created empty .agentic/ dirs, so the
+    Read-GraphStats Python invocation was never exercised; PSNativeCommandArgument
+    Passing strips embedded quotes from `python -c <script>` and the SQL
+    SyntaxError silently fell to the catch block."""
+    from agentic_mcp import db as db_mod, findings, init_project, nodes
+
+    target = scaffolded / "ws" / "repo-a"
+    init_project.run(project_root=target, scope_mode="isolated")
+
+    # Seed: 1 open dispatched Spec + 2 open Critical Findings.
+    conn = db_mod.connect(target / ".agentic" / "graph.db")
+    spec_id = nodes.create_node(
+        conn, "Spec", status="dispatched", owner="t", body="seed",
+        criteria_json=json.dumps([
+            {"text": "x", "verify": "pytest x.py -v", "satisfied": False},
+        ]),
+        feedback_loop=(
+            "If users report breakage, file a bug and write a retro."
+        ),
+    )
+    findings.log_finding(conn, spec_id, "Critical", body="seed crit 1")
+    findings.log_finding(conn, spec_id, "Critical", body="seed crit 2")
+    conn.close()
+
+    code, out = _run_hook(target)
+    assert code == 0
+    payload = json.loads(out)
+    ctx = payload["additionalContext"]
+    assert "Open specs: 1" in ctx, f"expected 'Open specs: 1' in:\n{ctx}"
+    assert "Open critical findings: 2" in ctx, (
+        f"expected 'Open critical findings: 2' in:\n{ctx}"
+    )
