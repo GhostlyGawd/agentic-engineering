@@ -8,6 +8,7 @@ from . import nodes
 
 VALID_SEVERITIES = {"Critical", "Important", "Suggested", "Strength"}
 VALID_TRIAGE = {"fix-in-pr", "backlog"}
+VALID_FAILED_LAYERS = {"spec", "implementation", "review", "unknowable"}
 
 
 def log_finding(
@@ -58,6 +59,34 @@ def record_triage(conn: sqlite3.Connection, finding_id: str, decision: str) -> N
             f"{finding['severity']!r}"
         )
     nodes.update_node(conn, finding_id, triage=decision)
+
+
+def log_retro(
+    conn: sqlite3.Connection,
+    body: str,
+    failed_layer: str,
+    caused_by_finding_id: str | None = None,
+    scope: str | None = None,
+    owner: str = "system",
+) -> str:
+    """Write a Retro tagged by failed_layer; optionally link it caused-by a Finding.
+
+    failed_layer already ships from Phase 0 (retro table CHECK). This is a
+    convenience wrapper, not a migration.
+    """
+    if failed_layer not in VALID_FAILED_LAYERS:
+        raise ValueError(
+            f"unknown failed_layer: {failed_layer!r}. "
+            f"Valid: {sorted(VALID_FAILED_LAYERS)}"
+        )
+    rid = nodes.create_node(
+        conn, "Retro", status="open", owner=owner, body=body,
+        failed_layer=failed_layer, scope=scope,
+    )
+    if caused_by_finding_id is not None:
+        from . import relations
+        relations.link_nodes(conn, rid, caused_by_finding_id, "caused-by")
+    return rid
 
 
 def mark_criterion_satisfied(
