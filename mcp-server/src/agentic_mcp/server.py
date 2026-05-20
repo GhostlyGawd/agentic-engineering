@@ -20,6 +20,7 @@ from . import scope as scope_mod
 from . import validators as v_mod
 from . import dispatch as dispatch_mod
 from . import loops as loops_mod
+from . import stability as stability_mod
 
 
 def _db_path() -> Path:
@@ -261,6 +262,21 @@ async def list_tools() -> list[Tool]:
                 "required": ["body", "failed_layer"],
             },
         ),
+        Tool(
+            name="detect_stability_contradiction",
+            description="Log a soft Pattern if a Critical hits a byte-identical file the reviewer previously approved. Records only; never suppresses the Critical.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string"},
+                    "path": {"type": "string"},
+                    "commit_before": {"type": "string"},
+                    "commit_after": {"type": "string"},
+                    "prior_approval": {"type": "boolean"},
+                },
+                "required": ["repo", "path", "commit_before", "commit_after", "prior_approval"],
+            },
+        ),
     ]
 
 
@@ -328,6 +344,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 scope=arguments.get("scope"),
             )
             return _ok({"id": rid})
+        if name == "detect_stability_contradiction":
+            pid = stability_mod.detect_stability_contradiction(
+                conn, arguments["repo"], arguments["path"],
+                arguments["commit_before"], arguments["commit_after"],
+                arguments["prior_approval"],
+            )
+            return _ok({"pattern_id": pid})
         return _err(f"unknown tool: {name}")
     except Exception as e:
         return _err(f"{type(e).__name__}: {e}")
