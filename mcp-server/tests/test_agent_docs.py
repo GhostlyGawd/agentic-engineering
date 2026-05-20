@@ -46,3 +46,14 @@ def test_contrarian_doc():
     assert "assumption" in low or "architect" in low
     assert "code-reviewer" in low and "blind" in low
     assert "log_finding" in t
+
+
+def test_spec_writer_doc():
+    t = _doc("agents/spec-writer.md")
+    assert "name: spec-writer" in t
+    assert "skills/spec-writing/SKILL.md" in t
+    assert "validate_spec" in t
+    low = t.lower()
+    assert "socratic" in low
+    assert "retry" in low or "attempts" in low
+    assert "escalate" in low or "surface" in low
