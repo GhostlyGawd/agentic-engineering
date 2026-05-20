@@ -24,8 +24,11 @@ def claude_on_path() -> bool:
 def run_claude_headless(prompt: str, cwd, timeout: int = 900) -> dict:
     if not claude_on_path():
         raise ClaudeUnavailable("`claude` CLI not on PATH")
+    # bypassPermissions required: builder agent must write files and call MCP tools
+    # during the exit-gate run; without it claude prompts interactively and hangs.
     proc = subprocess.run(
-        ["claude", "-p", prompt, "--output-format", "json"],
+        ["claude", "-p", prompt, "--output-format", "json",
+         "--permission-mode", "bypassPermissions"],
         cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
     )
     if proc.returncode != 0:

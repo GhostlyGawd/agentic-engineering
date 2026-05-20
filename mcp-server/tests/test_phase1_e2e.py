@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from agentic_mcp import db, findings, init_project, loops, nodes, relations
+from agentic_mcp import db, findings, init_project, loops, nodes
 from llm_harness import claude_on_path, run_claude_headless
 
 FIX = Path(__file__).resolve().parent / "fixtures" / "phase1"
@@ -59,34 +59,31 @@ def test_stubborn_critical_diagnostic_then_resolve(tmp_path):
     )
 
     loop_id = None
+    fid = None
     resolved_finding = None
     for n in (1, 2, 3, 4):
         _stage(project, FIX / "stubborn" / f"iter{n}.py")
         run_claude_headless(_review_prompt(spec_id), cwd=project)
         conn2 = db.connect(db_path)
-        try:
-            crits = _open_criticals(conn2, "proj")
-            if crits:
-                fid = crits[0][0]
-                if loop_id is None:
-                    loop_id = loops.start_critical_loop(conn2, fid)
-                else:
-                    loops.advance_critical_loop(conn2, loop_id)
+        crits = _open_criticals(conn2, "proj")
+        if crits:
+            fid = crits[0][0]
+            if loop_id is None:
+                loop_id = loops.start_critical_loop(conn2, fid)
             else:
-                # gate passed: close the loop and record the retro.
-                resolved_finding = fid if loop_id else None
-                if loop_id:
-                    loops.resolve_critical_loop(conn2, loop_id)
-                    findings.log_retro(
-                        conn2, body="impl missing combined-unit parse until iter4",
-                        failed_layer="implementation", caused_by_finding_id=fid,
-                    )
-                conn2.close()
-                break
-        finally:
-            if not conn2.execute("PRAGMA query_only").fetchone():
-                pass
-        conn2.close()
+                loops.advance_critical_loop(conn2, loop_id)
+            conn2.close()
+        else:
+            # gate passed: close the loop and record the retro.
+            resolved_finding = fid if loop_id else None
+            if loop_id:
+                loops.resolve_critical_loop(conn2, loop_id)
+                findings.log_retro(
+                    conn2, body="impl missing combined-unit parse until iter4",
+                    failed_layer="implementation", caused_by_finding_id=fid,
+                )
+            conn2.close()
+            break
 
     final = db.connect(db_path)
     try:
