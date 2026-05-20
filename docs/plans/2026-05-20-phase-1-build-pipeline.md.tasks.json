@@ -1,0 +1,51 @@
+{
+  "planPath": "docs/plans/2026-05-20-phase-1-build-pipeline.md",
+  "status": "in-progress (installment 1 of ~5 written: Tasks 0-3 of ~18)",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Pre-flight audit + Phase 1 migration module",
+      "status": "pending",
+      "description": "Idempotent user_version-gated migration: dispatched_at/criterion_index/loop_iteration/triage columns + critical_loop table. Files: migrations.py (new), db.py (mod), test_migrations.py. Verify: pytest tests/test_migrations.py -q."
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: Register CriticalLoop entity in nodes.py",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "Add CriticalLoop to ENTITY_TABLES + EXTRA_REQUIRED(finding_id,started_at) + EXTRA_OPTIONAL(iteration_count,diagnostic_fired_at,resolved_at). Files: nodes.py (mod), test_critical_loop.py. Verify: pytest tests/test_critical_loop.py -q."
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Critical-loop lifecycle module",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "loops.py: start/advance/resolve/get_open_loops; diagnostic_fired_at set once at iteration 3. Files: loops.py (new), test_critical_loop.py (append). Verify: pytest tests/test_critical_loop.py -q."
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: dispatched_at + dispatch_spec + criteria immutability",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "dispatch.py stamps dispatched_at once; validators.validate_dispatched_immutable rejects post-dispatch criteria change w/ supersede message. Files: dispatch.py (new), validators.py (mod), test_dispatch_immutability.py. Verify: pytest tests/test_dispatch_immutability.py -q."
+    }
+  ],
+  "remainingTasksToWrite": [
+    "Task 4: Finding triage columns wiring + record_triage",
+    "Task 5: log_retro convenience wrapper (failed_layer already shipped)",
+    "Task 6: Register all new tools in server.py (list_tools + call_tool)",
+    "Task 7: builder.md dual-mode (loop-fix section)",
+    "Task 8: agents/code-reviewer.md (new)",
+    "Task 9: agents/contrarian.md (new, asymmetric prompt)",
+    "Task 10: agents/spec-writer.md (new, validate_spec inline + retry cap)",
+    "Task 11: commands/dispatch.md",
+    "Task 12: commands/review-pr.md (loop engine: gate-then-parallel, severity, stopping rules, diagnostic, stability check)",
+    "Task 13: commands/new-spec.md (optional)",
+    "Task 14: headless claude CLI harness + @pytest.mark.llm marker + conftest",
+    "Task 15: staged artifact fixtures (iter1-4 stubborn, mixed-severity, contrarian-catch)",
+    "Task 16: exit-gate e2e test (4 scenarios, loop-level assertions)",
+    "Task 17: stability check (contradiction-of-prior-approval via git blob compare) + test",
+    "Task 18: README/docs update + plan-coverage review + final commit"
+  ],
+  "lastUpdated": "2026-05-20"
+}
