@@ -66,3 +66,17 @@ def test_dispatch_command_doc():
     assert "validate_spec" in t and "dispatch_spec" in t
     assert "builder" in low
     assert "supersede" in low
+
+
+def test_review_pr_command_doc():
+    t = _doc("commands/review-pr.md")
+    low = t.lower()
+    assert "spec-checker" in low and "code-reviewer" in low and "contrarian" in low
+    assert "parallel" in low and "blind" in low
+    assert "start_critical_loop" in t and "advance_critical_loop" in t
+    assert "resolve_critical_loop" in t
+    assert "diagnostic" in low
+    assert "diminishing returns" in low
+    assert "log_retro" in t
+    assert "loop-id" in low or "loop_id" in low
+    assert "gh" in low and "main" in low and "head" in low
