@@ -22,6 +22,7 @@
 ## 3. PowerShell 5.1 traps (Windows plans)
 
 - [ ] Every `git commit -m "<heredoc>"` replaced with `git commit -F <tempfile>` (or `git commit -F -` with stdin). PSNativeCommandArgumentPassing word-splits heredoc bodies to native exes — Phase 0's first commit failed this way.
+- [ ] The commit-message tempfile is written with `Set-Content -Encoding ascii` (NOT `-Encoding utf8`). PS5.1's `utf8` writes a UTF-8 BOM that `git commit -F` puts at the front of the commit subject — Phase 1's commit 7d2c0fe shipped a leading BOM (`﻿docs(plan):`) this way. ASCII commit messages need no BOM; for non-ASCII subjects use `git commit -F -` via stdin instead.
 - [ ] Every `python -c "<sql>"` (or any native exe `-c "..."`) replaced with `python <tempfile>.py`. Same PSNativeCommand bug — embedded `"` get stripped. We've been bitten by this twice (build commits, SessionStart hook).
 - [ ] No `2>&1` on any native exe call — corrupts `$?` and exit handling in PS5.1.
 - [ ] `.ps1` string literals are ASCII-only inside `"..."`. No em-dash, smart quotes, right-arrow. Comments and `@"..."@` here-strings are safe.
