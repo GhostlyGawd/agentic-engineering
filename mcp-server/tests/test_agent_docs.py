@@ -26,3 +26,13 @@ def test_builder_has_loop_fix_mode():
     # Loop control stays on the Claude side; builder must not advance/resolve.
     assert "advance_critical_loop" not in t
     assert "resolve_critical_loop" not in t
+
+
+def test_code_reviewer_doc():
+    t = _doc("agents/code-reviewer.md")
+    assert "name: code-reviewer" in t
+    for sev in ("Critical", "Important", "Suggested", "Strength"):
+        assert sev in t
+    assert "record_triage" in t
+    low = t.lower()
+    assert "contrarian" in low and "blind" in low
