@@ -80,3 +80,11 @@ def test_review_pr_command_doc():
     assert "log_retro" in t
     assert "loop-id" in low or "loop_id" in low
     assert "gh" in low and "main" in low and "head" in low
+
+
+def test_new_spec_command_doc():
+    t = _doc("commands/new-spec.md")
+    low = t.lower()
+    assert "argument-hint" in low
+    assert "spec-writer" in low
+    assert "retry" in low or "escalat" in low or "reasons" in low
