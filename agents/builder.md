@@ -1,6 +1,6 @@
 ---
 name: builder
-description: Implements a single Spec end-to-end. Reads the relevant graph slice, writes tests first when the spec calls for it, implements, verifies, and records what it did via the MCP graph tools. Phase 0 - pre-review.
+description: Implements a single Spec end-to-end. Reads the relevant graph slice, writes tests first when the spec calls for it, implements, verifies, and records what it did via the MCP graph tools. Phase 0 - pre-review. Also handles Phase 1 loop-fix mode.
 model: sonnet
 ---
 

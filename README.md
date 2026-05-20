@@ -40,7 +40,7 @@ roadmap.
 | `agents/builder.md`, `agents/spec-checker.md`          | shipped |
 | `/agentic:init`, `/agentic:detect-conflicts`, `/agentic:import-spec` | shipped |
 | SessionStart hook (Windows / PowerShell)               | shipped |
-| End-to-end exit-gate test           | passing |
+| Phase 0 bootstrap exit-gate test    | passing |
 
 **Shipped in Phase 1:** code-reviewer + contrarian roles + four-tier severity loop
 + spec-writer agent + critical-loop persistence + build/review commands (see below).
@@ -100,7 +100,7 @@ Phase 0 `graph.db` in place: it adds the `critical_loop` table plus
 ### Running the test suite
 
 ```powershell
-# Fast suite (no live agent needed) -- 102 tests:
+# Fast suite (no live agent needed) -- the fast suite:
 cd mcp-server
 .\.venv\Scripts\python.exe -m pytest -m "not llm" -q
 

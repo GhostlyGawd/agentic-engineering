@@ -31,6 +31,7 @@ def test_builder_has_loop_fix_mode():
 def test_code_reviewer_doc():
     t = _doc("agents/code-reviewer.md")
     assert "name: code-reviewer" in t
+    assert "model: sonnet" in t
     for sev in ("Critical", "Important", "Suggested", "Strength"):
         assert sev in t
     assert "record_triage" in t
@@ -41,6 +42,7 @@ def test_code_reviewer_doc():
 def test_contrarian_doc():
     t = _doc("agents/contrarian.md")
     assert "name: contrarian" in t
+    assert "model: sonnet" in t
     low = t.lower()
     assert "assume" in low and "wrong" in low
     assert "assumption" in low or "architect" in low
@@ -51,6 +53,7 @@ def test_contrarian_doc():
 def test_spec_writer_doc():
     t = _doc("agents/spec-writer.md")
     assert "name: spec-writer" in t
+    assert "model: sonnet" in t
     assert "skills/spec-writing/SKILL.md" in t
     assert "validate_spec" in t
     low = t.lower()
