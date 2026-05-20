@@ -20,6 +20,7 @@ ENTITY_TABLES = {
     "Review": "review",
     "Retro": "retro",
     "ArchDebt": "arch_debt",
+    "CriticalLoop": "critical_loop",
 }
 
 # Required fields beyond the auto-filled ones (id, created_at, last_touched, type).
@@ -30,6 +31,7 @@ EXTRA_REQUIRED = {
     "Spec": {"criteria_json", "feedback_loop"},
     "Finding": {"severity", "parent_id"},
     "File": {"path"},
+    "CriticalLoop": {"finding_id", "started_at"},
 }
 
 # Optional type-specific columns (allowed but not required).
@@ -38,6 +40,7 @@ EXTRA_OPTIONAL = {
     "Finding": {"subtype"},
     "Retro": {"failed_layer"},
     "Review": {"verdict"},
+    "CriticalLoop": {"iteration_count", "diagnostic_fired_at", "resolved_at"},
 }
 
 # Columns common to all entity tables.
