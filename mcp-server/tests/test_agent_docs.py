@@ -57,3 +57,12 @@ def test_spec_writer_doc():
     assert "socratic" in low
     assert "retry" in low or "attempts" in low
     assert "escalate" in low or "surface" in low
+
+
+def test_dispatch_command_doc():
+    t = _doc("commands/dispatch.md")
+    low = t.lower()
+    assert "argument-hint" in low
+    assert "validate_spec" in t and "dispatch_spec" in t
+    assert "builder" in low
+    assert "supersede" in low
