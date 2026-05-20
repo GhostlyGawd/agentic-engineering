@@ -19,20 +19,48 @@ scope (`query_graph(type='Spec', status='dispatched')`).
 
 ## Step 1 - One review round (gate-then-parallel, L-7)
 
-1. Dispatch the `spec-checker` subagent (Task tool) FIRST. It is the gate: it
-   runs each criterion's verify and logs a Critical per failure.
-2. If the spec-checker logged ANY open Critical, the gate failed - skip the
-   judgment agents this round (no point reviewing taste on broken code). Go to
-   Step 2.
-3. If the gate passed, dispatch `code-reviewer` AND `contrarian` IN PARALLEL
-   (two Task calls in one message), each blind to the other. They log findings
-   with severity; the code-reviewer also calls `record_triage` for every
-   Important.
+Pass the target/diff resolved in Step 0 into EVERY agent dispatch below
+(spec-checker, code-reviewer, contrarian) so each agent reviews the right diff -
+the same PR diff, branch-vs-main diff, or working-tree diff Step 0 selected.
+
+1. Dispatch the `spec-checker` subagent (Task tool) FIRST, against the Step 0
+   target. It is the gate: it runs each criterion's verify and logs a Critical
+   per failure.
+2. RE-VERIFICATION / FINDING LIFECYCLE: on every re-run of this step (i.e. every
+   round after the first builder loop-fix round), the spec-checker re-verifies
+   each criterion. For every criterion that now PASSES, CLOSE the corresponding
+   still-open Critical finding for that criterion:
+   `update_node(id=<finding_id>, status='resolved')`. A Critical finding lives in
+   exactly one of two states - `open` (its criterion still fails) or `resolved`
+   (its criterion now passes) - and only this re-verification moves it from open
+   to resolved. Resolved findings drop out of the blocker set (Step 2).
+3. If the spec-checker logged ANY open Critical (still failing after step 2's
+   closures), the gate failed - skip the judgment agents this round (no point
+   reviewing taste on broken code). Go to Step 2.
+4. If the gate passed, dispatch `code-reviewer` AND `contrarian` IN PARALLEL
+   (two Task calls in one message), each against the Step 0 target and each blind
+   to the other. They log findings with severity; the code-reviewer also calls
+   `record_triage` for every Important.
 
 ## Step 2 - Classify and triage
 
 - Collect this round's open findings: `query_graph(type='Finding', status='open', scope=<scope>)`.
-- The BLOCKER SET = open Criticals PLUS Importants whose `triage` is `fix-in-pr`.
+  This query reflects the CURRENT round AFTER Step 1's re-verification closures:
+  any Critical whose criterion now passes is already `resolved` and is therefore
+  absent here. The set shrinks as criteria pass and can reach empty.
+- NORMALIZE TRIAGE on every open Important first. The code-reviewer triages its
+  own Importants, but a contrarian-raised Important arrives with NO `triage`
+  value. For each open Important with no triage yet, read its body: if the body
+  indicates it must block this PR (block-intent), call
+  `record_triage(finding_id, 'fix-in-pr')`; otherwise call
+  `record_triage(finding_id, 'backlog')`. (`record_triage` operates on Important
+  findings.) This guarantees every must-block contrarian Important is keyed
+  `fix-in-pr` and thus enters the blocker set below.
+- The BLOCKER SET = open Criticals PLUS open Importants whose `triage` is
+  `fix-in-pr`. Resolved/closed findings are not in this set. The blocker set is
+  scoped to THIS round - it is exactly the findings still `open` after this
+  round's re-verification - so as criteria pass and Criticals close, the set
+  empties.
 - `backlog` Importants are logged non-blocking; they persist with their link so
   a later Critical can trace `caused-by` them.
 - Suggested and Strength never block.
@@ -40,10 +68,15 @@ scope (`query_graph(type='Spec', status='dispatched')`).
 ## Step 3 - Stopping rules (check BEFORE fixing)
 
 - **Primary exit:** the blocker set is empty -> the loop is done. Go to Step 6.
-- **Diminishing returns:** this round found zero NEW Criticals versus the prior
-  round and regressed none of the prior approvals -> the floor is reached ->
-  close even if Suggested/backlog Importants remain. Go to Step 6.
-- Otherwise there is at least one open blocker -> Step 4.
+- **Diminishing returns:** this rule may close the loop ONLY when there are NO
+  open Criticals (only Suggested and/or backlog Importants remain). When that
+  holds AND this round found zero NEW Criticals versus the prior round AND
+  regressed none of the prior approvals -> the floor is reached -> close even if
+  Suggested/backlog Importants remain. Go to Step 6.
+  A still-open Critical NEVER triggers diminishing returns - not even a stubborn
+  repeat that is "not new". Any open Critical falls through to the next bullet.
+- Otherwise there is at least one open blocker (e.g. an open Critical, including
+  a stubborn non-new one, or an open fix-in-pr Important) -> Step 4.
 
 ## Step 4 - Critical loop bookkeeping + diagnostic
 
@@ -66,13 +99,18 @@ calibration signal.
 ## Step 5 - Fix and re-loop (L-11: one commit per iteration)
 
 Dispatch the `builder` subagent in loop-fix mode against the blocker set. When
-it returns, make exactly ONE commit for this iteration, with trailers:
+it returns, make exactly ONE commit for this iteration (L-11). The commit
+carries one `Loop-Id:` trailer line PER active CriticalLoop in this round (so a
+round resolving three Criticals in parallel emits three Loop-Id lines), plus a
+SINGLE `Loop-Iteration:` line giving this round's number:
 
 ```
-Loop-Id: <loop_id>
-Loop-Iteration: <n>
+Loop-Id: <loop_id_A>
+Loop-Id: <loop_id_B>
+Loop-Iteration: <round number>
 ```
 
+When only one CriticalLoop is active this collapses to a single `Loop-Id` line.
 Then go back to Step 1 for the next round.
 
 ## Step 6 - Close the loop
