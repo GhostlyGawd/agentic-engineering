@@ -27,7 +27,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "-m \"not llm\""
+addopts = "-m \"not llm\" --ignore=tests/fixtures"
 markers = [
   "llm: requires a live `claude` CLI session (slow, real-agent). Excluded by default; run with -m llm.",
 ]
