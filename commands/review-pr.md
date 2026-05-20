@@ -68,13 +68,15 @@ the same PR diff, branch-vs-main diff, or working-tree diff Step 0 selected.
 ## Step 3 - Stopping rules (check BEFORE fixing)
 
 - **Primary exit:** the blocker set is empty -> the loop is done. Go to Step 6.
-- **Diminishing returns:** this rule may close the loop ONLY when there are NO
-  open Criticals (only Suggested and/or backlog Importants remain). When that
-  holds AND this round found zero NEW Criticals versus the prior round AND
-  regressed none of the prior approvals -> the floor is reached -> close even if
+- **Diminishing returns:** this rule may close the loop ONLY when the blocker set
+  is free of hard blockers - i.e. NO open Criticals AND NO open fix-in-pr
+  Importants (only Suggested and/or backlog Importants remain). When that holds
+  AND this round found zero NEW Criticals versus the prior round AND regressed
+  none of the prior approvals -> the floor is reached -> close even if
   Suggested/backlog Importants remain. Go to Step 6.
-  A still-open Critical NEVER triggers diminishing returns - not even a stubborn
-  repeat that is "not new". Any open Critical falls through to the next bullet.
+  A still-open Critical (or open fix-in-pr Important) NEVER triggers diminishing
+  returns - not even a stubborn repeat that is "not new". Any open blocker falls
+  through to the next bullet.
 - Otherwise there is at least one open blocker (e.g. an open Critical, including
   a stubborn non-new one, or an open fix-in-pr Important) -> Step 4.
 
