@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 
 _HANDWAVE_PATTERNS = [
     r"\btbd\b",
@@ -81,6 +82,32 @@ def validate_feedback_loop(text: str) -> tuple[bool, list[str]]:
     if not has_fix:
         reasons.append("feedback_loop must name a fix path")
     return (len(reasons) == 0), reasons
+
+
+def validate_dispatched_immutable(
+    conn: sqlite3.Connection, spec_id: str, new_criteria: list[dict]
+) -> tuple[bool, list[str]]:
+    """Reject criteria changes on an already-dispatched spec.
+
+    Compares (text, verify, order, count) of new_criteria against the stored
+    criteria. If the spec is not dispatched, always passes.
+    """
+    from . import nodes
+    spec = nodes.get_node(conn, spec_id)
+    if spec is None or spec["type"] != "Spec":
+        return False, [f"not a Spec node: {spec_id}"]
+    if not spec.get("dispatched_at"):
+        return True, []
+    stored = json.loads(spec["criteria_json"])
+    stored_sig = [(c.get("text"), c.get("verify")) for c in stored]
+    new_sig = [(c.get("text"), c.get("verify")) for c in new_criteria]
+    if stored_sig != new_sig:
+        return False, [
+            f"spec {spec_id} was dispatched at {spec['dispatched_at']}; criteria "
+            "cannot change after dispatch. Create a new Spec with a 'supersedes' "
+            "relation to this one instead."
+        ]
+    return True, []
 
 
 def validate_spec(spec: dict) -> tuple[bool, list[str]]:

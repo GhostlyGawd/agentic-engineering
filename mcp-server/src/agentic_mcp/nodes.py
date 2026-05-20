@@ -36,7 +36,7 @@ EXTRA_REQUIRED = {
 
 # Optional type-specific columns (allowed but not required).
 EXTRA_OPTIONAL = {
-    "Spec": {"required_reads"},
+    "Spec": {"required_reads", "dispatched_at"},
     "Finding": {"subtype"},
     "Retro": {"failed_layer"},
     "Review": {"verdict"},
