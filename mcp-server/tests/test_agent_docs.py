@@ -36,3 +36,13 @@ def test_code_reviewer_doc():
     assert "record_triage" in t
     low = t.lower()
     assert "contrarian" in low and "blind" in low
+
+
+def test_contrarian_doc():
+    t = _doc("agents/contrarian.md")
+    assert "name: contrarian" in t
+    low = t.lower()
+    assert "assume" in low and "wrong" in low
+    assert "assumption" in low or "architect" in low
+    assert "code-reviewer" in low and "blind" in low
+    assert "log_finding" in t
