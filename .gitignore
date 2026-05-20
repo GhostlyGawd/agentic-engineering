@@ -17,6 +17,9 @@ __pycache__/
 # Claude Code session/transcript metadata (per-machine, must not ship publicly)
 .engineering-board/
 
+# Git worktrees (isolated implementation workspaces)
+.worktrees/
+
 # Editors
 .vscode/
 .idea/
