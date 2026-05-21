@@ -1,158 +1,158 @@
 {
   "planPath": "docs/plans/2026-05-17-phase-0-foundations.md",
-  "lastUpdated": "2026-05-18T00:00:00Z",
+  "lastUpdated": "2026-05-17T14:10:00Z",
   "tasks": [
     {
       "id": 1,
       "subject": "Task 0: Project scaffold + Python tooling",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "description": "**Goal:** Create empty plugin directory layout and Python package skeleton.\n\n**Files:** plugin dirs, mcp-server/pyproject.toml, __init__.py, conftest.py, .gitignore, README.md.\n\n**Verify:** `cd mcp-server && pytest --collect-only` -> exit 0, \"collected 0 items\".\n\n```json:metadata\n{\"files\":[\"mcp-server/pyproject.toml\",\"mcp-server/src/agentic_mcp/__init__.py\",\"mcp-server/tests/conftest.py\",\".gitignore\",\"README.md\"],\"verifyCommand\":\"cd mcp-server && pytest --collect-only\",\"acceptanceCriteria\":[\"directory layout per File Map\",\"pyproject declares deps\",\"pip install -e mcp-server[dev] succeeds\",\"pytest --collect-only exits 0\"]}\n```"
     },
     {
       "id": 2,
       "subject": "Task 1: Plugin manifest + .mcp.json registration",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Make plugin installable by Claude Code; register the agentic-graph stdio MCP server.\n\n**Files:** .claude-plugin/plugin.json, .mcp.json.\n\n```json:metadata\n{\"files\":[\".claude-plugin/plugin.json\",\".mcp.json\"],\"verifyCommand\":\"python -c \\\"import json; json.load(open('.claude-plugin/plugin.json')); json.load(open('.mcp.json')); print('ok')\\\"\",\"acceptanceCriteria\":[\"plugin.json validates JSON with name/version/description/author\",\"mcp.json registers stdio server pointed at agentic-mcp\"]}\n```"
     },
     {
       "id": 3,
       "subject": "Task 2: SQLite schema + DB init",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Full graph DDL (14 entity tables, relations table with CHECK constraint, indexes) and db.py with init_db. Phase 0 uses pure SQLite — sqlite-vec / vec0 deferred to Phase 3.\n\n**Files:** mcp-server/src/agentic_mcp/schema.sql, db.py, tests/test_db.py.\n\n```json:metadata\n{\"files\":[\"mcp-server/src/agentic_mcp/schema.sql\",\"mcp-server/src/agentic_mcp/db.py\",\"mcp-server/tests/test_db.py\"],\"verifyCommand\":\"pytest mcp-server/tests/test_db.py -v\",\"acceptanceCriteria\":[\"14 entity tables present\",\"relations CHECK constraint enforces 9 valid types\",\"init_db idempotent\",\"schema is pure SQLite (no extensions)\"]}\n```"
     },
     {
       "id": 4,
       "subject": "Task 3: Entity CRUD - create_node, update_node, get_node",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3],
       "description": "**Goal:** Typed Python API for create/update/get of any of 14 entity types with auto-timestamps and required-field validation.\n\n**Files:** mcp-server/src/agentic_mcp/nodes.py, tests/test_nodes.py.\n\n```json:metadata\n{\"files\":[\"mcp-server/src/agentic_mcp/nodes.py\",\"mcp-server/tests/test_nodes.py\"],\"verifyCommand\":\"pytest mcp-server/tests/test_nodes.py -v\",\"acceptanceCriteria\":[\"create_node returns id auto-filled timestamps\",\"required fields validated\",\"type-specific extras (Spec/Finding/File/Retro/Review) handled\",\"update bumps last_touched\",\"round-trip all 14 types\"]}\n```"
     },
     {
       "id": 5,
       "subject": "Task 4: Relations - link_nodes",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3],
       "description": "**Goal:** link_nodes for the 9 valid relation types + neighbors query (in/out direction).\n\n**Files:** mcp-server/src/agentic_mcp/relations.py, tests/test_relations.py.\n\n```json:metadata\n{\"files\":[\"mcp-server/src/agentic_mcp/relations.py\",\"mcp-server/tests/test_relations.py\"],\"verifyCommand\":\"pytest mcp-server/tests/test_relations.py -v\",\"acceptanceCriteria\":[\"link_nodes inserts row\",\"unknown relation rejected\",\"idempotent on duplicate\",\"neighbors out/in both directions\"]}\n```"
     },
     {
       "id": 6,
       "subject": "Task 5: Queries - query_graph + targeted reads",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4, 5],
       "description": "**Goal:** query_graph (filtered), get_required_reads (spec->nodes), walk_down (hierarchical traversal).\n\n**Files:** mcp-server/src/agentic_mcp/queries.py, tests/test_queries.py.\n\n```json:metadata\n{\"files\":[\"mcp-server/src/agentic_mcp/queries.py\",\"mcp-server/tests/test_queries.py\"],\"verifyCommand\":\"pytest mcp-server/tests/test_queries.py -v\",\"acceptanceCriteria\":[\"query_graph filters by type/status/severity/scope\",\"get_required_reads resolves spec required_reads JSON to nodes\",\"walk_down BFS over implements/depends-on\"]}\n```"
     },
     {
       "id": 7,
       "subject": "Task 6: log_finding + mark_criterion_satisfied",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4],
       "description": "**Goal:** Convenience writes used by builder/spec-checker. log_finding auto-inherits scope; mark_criterion_satisfied requires evidence.\n\n**Files:** mcp-server/src/agentic_mcp/findings.py, tests/test_findings.py.\n\n```json:metadata\n{\"files\":[\"mcp-server/src/agentic_mcp/findings.py\",\"mcp-server/tests/test_findings.py\"],\"verifyCommand\":\"pytest mcp-server/tests/test_findings.py -v\",\"acceptanceCriteria\":[\"log_finding inherits parent scope\",\"explicit scope wins\",\"invalid severity rejected\",\"empty evidence rejected\",\"out-of-range criterion index raises\"]}\n```"
     },
     {
       "id": 8,
       "subject": "Task 7: Falsifiability + feedback-loop validators",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Hard gates: validate_criterion, validate_feedback_loop, validate_spec. Rejects hand-wavy language; requires runnable cmd / runtime signal + named fix path.\n\n**Files:** mcp-server/src/agentic_mcp/validators.py, tests/test_validators.py.\n\n```json:metadata\n{\"files\":[\"mcp-server/src/agentic_mcp/validators.py\",\"mcp-server/tests/test_validators.py\"],\"verifyCommand\":\"pytest mcp-server/tests/test_validators.py -v\",\"acceptanceCriteria\":[\"rejects empty/short/handwave verify\",\"accepts runnable command\",\"accepts runtime signals\",\"feedback loop needs signal AND fix path\",\"validate_spec composes both\"]}\n```"
     },
     {
       "id": 9,
       "subject": "Task 8: Scope auto-inference",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** infer_scope with priority order: explicit > parent_scope > body path mentions (LCP) > recent_files (LCP) > cwd basename > 'global'.\n\n**Files:** mcp-server/src/agentic_mcp/scope.py, tests/test_scope.py.\n\n```json:metadata\n{\"files\":[\"mcp-server/src/agentic_mcp/scope.py\",\"mcp-server/tests/test_scope.py\"],\"verifyCommand\":\"pytest mcp-server/tests/test_scope.py -v\",\"acceptanceCriteria\":[\"explicit wins\",\"parent_scope second\",\"body path LCP third\",\"recent_files LCP fourth\",\"cwd basename fifth\",\"global fallback\"]}\n```"
     },
     {
       "id": 10,
       "subject": "Task 9: stdio MCP server wrapper",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4, 5, 6, 7, 8, 9],
       "description": "**Goal:** Expose 10 tools via stdio MCP. DB path from AGENTIC_DB_PATH env, defaults to ./.agentic/graph.db.\n\n**Files:** mcp-server/src/agentic_mcp/server.py, tests/test_server.py.\n\n```json:metadata\n{\"files\":[\"mcp-server/src/agentic_mcp/server.py\",\"mcp-server/tests/test_server.py\"],\"verifyCommand\":\"pytest mcp-server/tests/test_server.py -v\",\"acceptanceCriteria\":[\"agentic-mcp script starts stdio server\",\"all 10 tools listed with JSON schemas\",\"create_node + get_node round-trip via stdio\",\"validate_spec exposed and rejects bad spec\"]}\n```"
     },
     {
       "id": 11,
       "subject": "Task 10: Spec template with 3 worked examples",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [8],
       "description": "**Goal:** Canonical Spec markdown template plus 3 examples (slugify, status command, sqlite-vec bug fix) that all pass validate_spec.\n\n**Files:** templates/spec.md.\n\n```json:metadata\n{\"files\":[\"templates/spec.md\"],\"verifyCommand\":\"python -c (see plan task 10 step 2)\",\"acceptanceCriteria\":[\"all PRD spec fields present\",\"3 examples (trivial/feature/bug)\",\"all 3 examples pass validate_spec\"]}\n```"
     },
     {
       "id": 12,
       "subject": "Task 11: skills/router/SKILL.md",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [10],
       "description": "**Goal:** Entry-point skill describing the system and pointing at tools/skills/commands. Under 400 body lines. No cross-plugin references.\n\n**Files:** skills/router/SKILL.md.\n\n```json:metadata\n{\"files\":[\"skills/router/SKILL.md\"],\"verifyCommand\":\"python -c (see plan task 11 verify block)\",\"acceptanceCriteria\":[\"frontmatter name: router\",\"body <400 lines\",\"names all 10 MCP tools\",\"points at templates/spec.md and spec-writing skill\",\"describes Phase 0 builder+spec-checker flow\"]}\n```"
     },
     {
       "id": 13,
       "subject": "Task 12: skills/spec-writing/SKILL.md",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [8, 11],
       "description": "**Goal:** Spec-writing skill with embedded Socratic intent-clarification pass (5-8 questions). Phase 0 minimal. Under 250 body lines. No cross-plugin references.\n\n**Files:** skills/spec-writing/SKILL.md.\n\n```json:metadata\n{\"files\":[\"skills/spec-writing/SKILL.md\"],\"verifyCommand\":\"python -c (see plan task 12 verify block)\",\"acceptanceCriteria\":[\"frontmatter name: spec-writing\",\"body <250 lines\",\"Socratic question list (5-8)\",\"references templates/spec.md and validate_spec\",\"no superpowers-extended-cc references\"]}\n```"
     },
     {
       "id": 14,
       "subject": "Task 13: Builder subagent (agents/builder.md)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [10, 12],
       "description": "**Goal:** Builder subagent with concise embedded TDD + systematic-debugging guidance. Under 200 lines. First action: get_required_reads + query_graph for open Criticals.\n\n**Files:** agents/builder.md.\n\n```json:metadata\n{\"files\":[\"agents/builder.md\"],\"verifyCommand\":\"python -c (see plan task 13 verify block)\",\"acceptanceCriteria\":[\"frontmatter name: builder\",\"body <200 lines\",\"first action calls get_required_reads + query_graph\",\"embedded TDD guidance\",\"embedded debugging guidance\",\"no cross-plugin refs\"]}\n```"
     },
     {
       "id": 15,
       "subject": "Task 14: Spec-checker subagent (agents/spec-checker.md)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [10],
       "description": "**Goal:** Spec-checker subagent. Context-isolated: only sees spec + artifact. Runs each criterion's verify, calls mark_criterion_satisfied with evidence on pass or log_finding(Critical) on fail. Under 150 lines.\n\n**Files:** agents/spec-checker.md.\n\n```json:metadata\n{\"files\":[\"agents/spec-checker.md\"],\"verifyCommand\":\"python -c (see plan task 14 verify block)\",\"acceptanceCriteria\":[\"frontmatter name: spec-checker\",\"body <150 lines\",\"first action: get_node spec\",\"per-criterion loop with mark/log_finding\",\"explicit context-isolation discipline\"]}\n```"
     },
     {
       "id": 16,
       "subject": "Task 15: SessionStart hook (PowerShell walk-up resolver)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3],
       "description": "**Goal:** PowerShell 5.1 hook that walks up from cwd looking for .agentic/, emits factual additionalContext JSON when found, silent when not. ASCII-only string literals; parse-checked.\n\n**Files:** hooks/hooks.json, hooks/session-start.ps1, mcp-server/tests/test_walkup.py.\n\n```json:metadata\n{\"files\":[\"hooks/hooks.json\",\"hooks/session-start.ps1\",\"mcp-server/tests/test_walkup.py\"],\"verifyCommand\":\"pytest mcp-server/tests/test_walkup.py -v\",\"acceptanceCriteria\":[\"walks up closest wins\",\"silent when no .agentic\",\"JSON additionalContext with project root + graph stats\",\"ASCII-only string literals\",\"parses cleanly\",\"4 walkup scenarios pass\"]}\n```"
     },
     {
       "id": 17,
       "subject": "Task 16: /agentic:init command",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3],
       "description": "**Goal:** Slash command that scaffolds .agentic/ at cwd, accepts scope mode (isolated/workspace/personal), initializes graph.db. Non-destructive on re-run.\n\n**Files:** commands/init.md, mcp-server/src/agentic_mcp/init_project.py, tests/test_init_project.py, modify pyproject.toml.\n\n```json:metadata\n{\"files\":[\"commands/init.md\",\"mcp-server/src/agentic_mcp/init_project.py\",\"mcp-server/tests/test_init_project.py\",\"mcp-server/pyproject.toml\"],\"verifyCommand\":\"pytest mcp-server/tests/test_init_project.py -v\",\"acceptanceCriteria\":[\"creates .agentic/{graph.db,config.json,compatibility.json,specs/}\",\"scope mode validated\",\"re-run non-destructive\"]}\n```"
     },
     {
       "id": 18,
       "subject": "Task 17: /agentic:detect-conflicts command",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [17],
       "description": "**Goal:** Informational-only command listing installed plugins, surfacing known overlaps (v1: Superpowers only), recording user preference in .agentic/compatibility.json. Never modifies another plugin.\n\n**Files:** commands/detect-conflicts.md, mcp-server/src/agentic_mcp/registry.py, conflicts.py, tests/test_conflicts.py.\n\n```json:metadata\n{\"files\":[\"commands/detect-conflicts.md\",\"mcp-server/src/agentic_mcp/registry.py\",\"mcp-server/src/agentic_mcp/conflicts.py\",\"mcp-server/tests/test_conflicts.py\"],\"verifyCommand\":\"pytest mcp-server/tests/test_conflicts.py -v\",\"acceptanceCriteria\":[\"registry has superpowers-extended-cc only\",\"detect finds fake plugin in temp dir\",\"render text matches PRD template phrases\",\"record_preference writes ONLY inside .agentic/\"]}\n```"
     },
     {
       "id": 19,
       "subject": "Task 18: /agentic:import-spec command",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4, 8],
       "description": "**Goal:** Bridge for external plans. from_markdown parses criteria_json + feedback_loop, runs validate_spec, creates Spec node on pass or returns reasons on fail.\n\n**Files:** commands/import-spec.md, mcp-server/src/agentic_mcp/import_spec.py, tests/test_import_spec.py.\n\n```json:metadata\n{\"files\":[\"commands/import-spec.md\",\"mcp-server/src/agentic_mcp/import_spec.py\",\"mcp-server/tests/test_import_spec.py\"],\"verifyCommand\":\"pytest mcp-server/tests/test_import_spec.py -v\",\"acceptanceCriteria\":[\"good spec imports and creates Spec node\",\"bad spec rejected with reasons\",\"bad spec creates NO node\"]}\n```"
     },
     {
       "id": 20,
       "subject": "Task 19: End-to-end bootstrap test (Phase 0 exit gate)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4, 7, 8, 17],
       "description": "**Goal:** Run full flow on slugify(s) toy task: init project -> create Goal+Spec -> validate_spec passes -> run criteria -> mark_criterion_satisfied for each -> log Strength Finding -> reopen DB -> verify everything persists. This IS the Phase 0 exit gate test.\n\n**Files:** mcp-server/tests/test_e2e_bootstrap.py.\n\n```json:metadata\n{\"files\":[\"mcp-server/tests/test_e2e_bootstrap.py\"],\"verifyCommand\":\"pytest mcp-server/tests/test_e2e_bootstrap.py -v\",\"acceptanceCriteria\":[\"init_project + create nodes + validate_spec passes\",\"spec-checker simulation runs verify cmds\",\"all criteria marked satisfied\",\"Strength Finding logged\",\"DB closed and reopened proves persistence\"]}\n```"
     },
     {
       "id": 21,
       "subject": "Task 20: Plan-coverage review + README + final commit",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [20],
       "description": "**Goal:** Confirm every Phase 0 PRD build item maps to a completed task. Update repo README. Full test suite green.\n\n**Files:** README.md (modify).\n\n```json:metadata\n{\"files\":[\"README.md\"],\"verifyCommand\":\"cd mcp-server && pytest -v\",\"acceptanceCriteria\":[\"README explains project/phase/install/commands/spec template/plan location (references PRD v3 and GhostlyGawd/agentic-engineering)\",\"every PRD Phase 0 build item maps to completed task\",\"all tests green\"]}\n```"
     },
     {
       "id": 22,
       "subject": "Task 21: Push to GitHub as agentic-engineering",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [21],
       "description": "**Goal:** Create public repo github.com/GhostlyGawd/agentic-engineering and push everything. Verify fresh clone-and-install round-trip.\n\n**Files:** none modified.\n\n```json:metadata\n{\"files\":[],\"verifyCommand\":\"gh repo view GhostlyGawd/agentic-engineering --json name,visibility,defaultBranchRef\",\"acceptanceCriteria\":[\"repo exists public on main with Phase 0 commits\",\"origin remote points at it\",\"fresh clone + pip install -e + pytest passes in temp dir\",\"gh repo view returns expected manifest\"]}\n```"
     }
