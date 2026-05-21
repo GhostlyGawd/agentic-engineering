@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from llm_harness import claude_on_path, result_text, run_claude_headless, stage_mcp_config
+from llm_harness import _kill_tree, claude_on_path, result_text, run_claude_headless, stage_mcp_config
+
+
+def test_kill_tree_tolerates_dead_pid():
+    _kill_tree(999999)  # nonexistent pid -> must not raise
 
 
 def test_stage_mcp_config_writes_resolved_server(tmp_path):

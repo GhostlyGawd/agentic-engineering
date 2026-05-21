@@ -5,6 +5,10 @@ Same subprocess pattern Phase 0 used for PowerShell (test_walkup.py), pointed at
 `claude` instead. Runs on the Max subscription - no API key, no metered cost
 (design section 11). JSON parsing is isolated here so the e2e asserts on
 structured fields, never on raw stdout.
+
+Process-tree killing: on TimeoutExpired we call _kill_tree to send taskkill /F /T
+so that any MCP server child spawned by the agent is also reaped and does not hold
+the temp graph.db open after the parent claude process is gone.
 """
 from __future__ import annotations
 
@@ -16,6 +20,22 @@ import sys
 
 class ClaudeUnavailable(RuntimeError):
     pass
+
+
+def _kill_tree(pid: int) -> None:
+    """Kill *pid* and every descendant on Windows via taskkill /F /T.
+
+    Swallows all errors (nonexistent pid, permission denied, non-Windows) so
+    callers can always invoke this in a finally/except branch without masking
+    the original exception.
+    """
+    try:
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            capture_output=True, text=True,
+        )
+    except Exception:
+        pass
 
 
 def claude_on_path() -> bool:
@@ -59,17 +79,30 @@ def run_claude_headless(prompt: str, cwd, timeout: int = 900, mcp_config=None) -
            "--permission-mode", "bypassPermissions"]
     if mcp_config is not None:
         cmd += ["--mcp-config", str(mcp_config), "--strict-mcp-config"]
-    proc = subprocess.run(
+    # Use Popen so we hold the pid for tree-killing on timeout. A background
+    # search spawned by the agent once caused claude -p to block ~13.5 min past
+    # its real turn end; on TimeoutExpired we kill the whole child process tree
+    # (including any agentic-mcp server child) so the temp graph.db is released.
+    proc = subprocess.Popen(
         cmd,
-        cwd=str(cwd), capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=timeout,
+        cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace",
     )
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc.pid)
+        try:
+            proc.communicate(timeout=10)
+        except Exception:
+            pass
+        raise
     if proc.returncode != 0:
         raise RuntimeError(
             f"claude -p exited {proc.returncode}\n"
-            f"stdout:\n{proc.stdout[-2000:]}\nstderr:\n{proc.stderr[-2000:]}"
+            f"stdout:\n{(out or '')[-2000:]}\nstderr:\n{(err or '')[-2000:]}"
         )
-    return json.loads(proc.stdout)
+    return json.loads(out)
 
 
 def result_text(payload: dict) -> str:

@@ -26,6 +26,7 @@ def _review_prompt(spec_id: str) -> str:
         "Run /agentic:review-pr for this working directory. "
         f"The spec id is {spec_id}. Use the spec-checker as the gate, then the "
         "code-reviewer and contrarian. Log all findings to the graph via the MCP tools."
+        " Run every command in the FOREGROUND -- do not launch background tasks."
     )
 
 
