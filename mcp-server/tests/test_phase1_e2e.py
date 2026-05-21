@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from agentic_mcp import db, findings, init_project, loops, nodes
-from llm_harness import claude_on_path, run_claude_headless
+from llm_harness import claude_on_path, run_claude_headless, stage_mcp_config
 
 FIX = Path(__file__).resolve().parent / "fixtures" / "phase1"
 
@@ -58,12 +58,13 @@ def test_stubborn_critical_diagnostic_then_resolve(tmp_path):
         criteria_json=json.dumps(crit), feedback_loop=_FB, scope="proj",
     )
 
+    cfg = stage_mcp_config(project, db_path)
     loop_id = None
     fid = None
     resolved_finding = None
     for n in (1, 2, 3, 4):
         _stage(project, FIX / "stubborn" / f"iter{n}.py")
-        run_claude_headless(_review_prompt(spec_id), cwd=project)
+        run_claude_headless(_review_prompt(spec_id), cwd=project, mcp_config=cfg)
         conn2 = db.connect(db_path)
         crits = _open_criticals(conn2, "proj")
         if crits:
@@ -115,7 +116,8 @@ def test_mixed_severity(tmp_path):
         criteria_json=json.dumps(crit), feedback_loop=_FB, scope="proj",
     )
     conn.close()
-    run_claude_headless(_review_prompt(spec_id), cwd=project)
+    cfg = stage_mcp_config(project, db_path)
+    run_claude_headless(_review_prompt(spec_id), cwd=project, mcp_config=cfg)
     check = db.connect(db_path)
     try:
         triaged = check.execute(
@@ -144,7 +146,8 @@ def test_contrarian_catches_distinct_flaw(tmp_path):
         criteria_json=json.dumps(crit), feedback_loop=_FB, scope="proj",
     )
     conn.close()
-    run_claude_headless(_review_prompt(spec_id), cwd=project)
+    cfg = stage_mcp_config(project, db_path)
+    run_claude_headless(_review_prompt(spec_id), cwd=project, mcp_config=cfg)
     check = db.connect(db_path)
     try:
         owners = {r[0] for r in check.execute(

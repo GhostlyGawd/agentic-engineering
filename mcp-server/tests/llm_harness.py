@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 
 
 class ClaudeUnavailable(RuntimeError):
@@ -33,14 +34,35 @@ def _claude_exe() -> str:
     return exe
 
 
-def run_claude_headless(prompt: str, cwd, timeout: int = 900) -> dict:
+def stage_mcp_config(project, db_path):
+    """Write a resolved .mcp.json into *project* registering the agentic-graph server.
+
+    Uses sys.executable so the same venv that runs the tests also runs the MCP
+    server subprocess - no PATH ambiguity. Returns the Path to the written file.
+    """
+    from pathlib import Path
+    cfg = {"mcpServers": {"agentic-graph": {
+        "command": sys.executable,
+        "args": ["-m", "agentic_mcp.server"],
+        "env": {"AGENTIC_DB_PATH": str(db_path)},
+    }}}
+    p = Path(project) / ".mcp.json"
+    p.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    return p
+
+
+def run_claude_headless(prompt: str, cwd, timeout: int = 900, mcp_config=None) -> dict:
     exe = _claude_exe()
     # bypassPermissions required: builder agent must write files and call MCP tools
     # during the exit-gate run; without it claude prompts interactively and hangs.
+    cmd = [exe, "-p", prompt, "--output-format", "json",
+           "--permission-mode", "bypassPermissions"]
+    if mcp_config is not None:
+        cmd += ["--mcp-config", str(mcp_config), "--strict-mcp-config"]
     proc = subprocess.run(
-        [exe, "-p", prompt, "--output-format", "json",
-         "--permission-mode", "bypassPermissions"],
-        cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
+        cmd,
+        cwd=str(cwd), capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=timeout,
     )
     if proc.returncode != 0:
         raise RuntimeError(
