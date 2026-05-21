@@ -5,129 +5,148 @@
     {
       "id": 0,
       "subject": "Task 0: Pre-flight audit + Phase 1 migration module",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "description": "Idempotent user_version-gated migration: dispatched_at/criterion_index/loop_iteration/triage columns + critical_loop table. Files: migrations.py (new), db.py (mod), test_migrations.py. Verify: pytest tests/test_migrations.py -q."
     },
     {
       "id": 1,
       "subject": "Task 1: Register CriticalLoop entity in nodes.py",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "blockedBy": [0],
       "description": "Add CriticalLoop to ENTITY_TABLES + EXTRA_REQUIRED(finding_id,started_at) + EXTRA_OPTIONAL(iteration_count,diagnostic_fired_at,resolved_at). Files: nodes.py (mod), test_critical_loop.py. Verify: pytest tests/test_critical_loop.py -q."
     },
     {
       "id": 2,
       "subject": "Task 2: Critical-loop lifecycle module",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "blockedBy": [1],
       "description": "loops.py: start/advance/resolve/get_open_loops; diagnostic_fired_at set once at iteration 3. Files: loops.py (new), test_critical_loop.py (append). Verify: pytest tests/test_critical_loop.py -q."
     },
     {
       "id": 3,
       "subject": "Task 3: dispatched_at + dispatch_spec + criteria immutability",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "blockedBy": [0],
       "description": "dispatch.py stamps dispatched_at once; nodes.py registers dispatched_at in Spec EXTRA_OPTIONAL (else update_node drops the write); validators.validate_dispatched_immutable rejects post-dispatch criteria change w/ supersede message. Files: dispatch.py (new), nodes.py (mod), validators.py (mod), test_dispatch_immutability.py. Verify: pytest tests/test_dispatch_immutability.py -q."
     },
     {
       "id": 4,
       "subject": "Task 4: Finding triage columns wiring + record_triage",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "blockedBy": [0],
       "description": "Register criterion_index/loop_iteration/triage in Finding EXTRA_OPTIONAL; extend log_finding with criterion_index/loop_iteration; add record_triage (Important-only, fix-in-pr/backlog). Files: nodes.py (mod), findings.py (mod), test_triage.py. Verify: pytest tests/test_triage.py -q."
     },
     {
       "id": 5,
       "subject": "Task 5: log_retro convenience wrapper",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "blockedBy": [4],
       "description": "findings.log_retro: Retro with failed_layer enum (already shipped in Phase 0, no migration) + optional caused-by link. Validates layer before insert; DB CHECK still rejects out-of-set. Files: findings.py (mod), test_retro_layer.py. Verify: pytest tests/test_retro_layer.py -q."
     },
     {
       "id": 6,
       "subject": "Task 6: Register all new tools in server.py",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "blockedBy": [2, 3, 4, 5],
       "description": "list_tools + call_tool for dispatch_spec, start/advance/resolve_critical_loop, get_open_loops, record_triage, log_retro; add new create_node schema columns. Files: server.py (mod), test_server.py (append stdio round-trip). Verify: pytest tests/test_server.py -q."
     },
     {
       "id": 7,
       "subject": "Task 7: builder.md dual-mode (loop-fix section)",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "description": "Append loop-fix mode section (design L-8 Option A): read finding+diagnostic, fix root cause, one commit per iteration w/ Loop-Id+Loop-Iteration trailers, log_retro on resolve; builder does NOT advance/resolve. Files: agents/builder.md (mod), test_agent_docs.py (new). Verify: pytest tests/test_agent_docs.py -q."
     },
     {
       "id": 8,
       "subject": "Task 8: agents/code-reviewer.md (new)",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "blockedBy": [7],
       "description": "New agent: 4-tier severity findings + record_triage for every Important; blind to contrarian (L-7). Files: agents/code-reviewer.md (new), test_agent_docs.py (append). Verify: pytest tests/test_agent_docs.py -q."
     },
     {
       "id": 9,
       "subject": "Task 9: agents/contrarian.md (new, asymmetric prompt)",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "blockedBy": [7],
       "description": "New agent: assume-it-is-wrong stance; hunts assumptions/architecture/scaling/security, not style; blind to code-reviewer (L-7). Files: agents/contrarian.md (new), test_agent_docs.py (append). Verify: pytest tests/test_agent_docs.py -q."
     },
     {
       "id": 10,
       "subject": "Task 10: agents/spec-writer.md (new, validate_spec inline + retry cap)",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "blockedBy": [7],
       "description": "New agent (L-4): reads skills/spec-writing/SKILL.md, Socratic pass, validate_spec inline loop, retry cap of 5 then escalate; never returns a rejected spec. Files: agents/spec-writer.md (new), test_agent_docs.py (append). Verify: pytest tests/test_agent_docs.py -q."
     },
     {
       "id": 11,
       "subject": "Task 11: commands/dispatch.md",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "blockedBy": [6, 7],
       "description": "/agentic:dispatch <spec>: resolve spec, re-run validate_spec (refuse fail), dispatch_spec, kick builder iter 1; states criteria immutable post-dispatch (supersede). Files: commands/dispatch.md (new), test_agent_docs.py (append). Verify: pytest tests/test_agent_docs.py -q."
     },
     {
       "id": 12,
       "subject": "Task 12: commands/review-pr.md (loop engine)",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "blockedBy": [6, 8, 9],
       "description": "/agentic:review-pr loop engine: target auto-detect (gh PR -> main diff -> working tree, L-10); gate-then-parallel (L-7); severity classify + auto-triage; blocker set; start/advance/resolve loops; 3-iter non-blocking diagnostic; stopping rules; one commit/iter (L-11); close w/ Strength+Retros; references stability check (Task 17). Files: commands/review-pr.md (new), test_agent_docs.py (append). Verify: pytest tests/test_agent_docs.py -q."
     },
     {
       "id": 13,
       "subject": "Task 13: commands/new-spec.md",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "blockedBy": [10],
       "description": "/agentic:new-spec: dispatch spec-writer subagent; report created Spec id or the retry-cap escalation. Decision: shipped (thin wrapper). Files: commands/new-spec.md (new), test_agent_docs.py (append). Verify: pytest tests/test_agent_docs.py -q."
     },
     {
       "id": 14,
       "subject": "Task 14: headless claude CLI harness + llm marker",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "description": "SPIKE claude -p invocation/JSON shape/auth FIRST (record in spike doc). Then llm_harness.py (run_claude_headless + result_text), register llm marker + addopts default-deselect in pyproject, smoke test (skips if claude absent). Files: pyproject.toml (mod), llm_harness.py (new), test_llm_harness.py (new), spike doc (new). Verify: pytest -m 'not llm' -q green; pytest -m llm tests/test_llm_harness.py -q with session."
     },
     {
       "id": 15,
       "subject": "Task 15: staged artifact fixtures (stubborn/mixed/contrarian)",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "description": "fixtures/phase1: stubborn spec_test + iter1-4 (only iter4 passes), mixed widget.py, contrarian rate_limiter.py (single-process assumption flaw). Non-llm meta-test proves iter1-3 fail/iter4 passes + modules import. Files: fixtures/phase1/* (new), test_fixtures_phase1.py (new). Verify: pytest tests/test_fixtures_phase1.py -q."
     },
     {
       "id": 16,
       "subject": "Task 16: exit-gate e2e test (4 scenarios, loop-level assertions)",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "blockedBy": [12, 14, 15],
       "description": "test_phase1_e2e.py (@pytest.mark.llm): real agents via headless claude across rounds, test owns outer loop + artifact swap. Asserts loop-level: diagnostic at 3, resolve at 4, Retro tagged implementation; mixed auto-triage; contrarian distinct catch (known-flaky per design 11). Files: test_phase1_e2e.py (new). Verify: pytest -m llm tests/test_phase1_e2e.py -q with session; not collected by -m 'not llm'."
     },
     {
       "id": 17,
       "subject": "Task 17: stability check (contradiction-of-prior-approval) + tool",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "blockedBy": [6],
       "description": "stability.detect_stability_contradiction: identical git blob across two iter commits + prior explicit approval -> soft Pattern; late discovery / changed blob -> None; never suppresses the Critical (design 8/12). Register MCP tool. Files: stability.py (new), server.py (mod), test_stability_check.py (new). Verify: pytest tests/test_stability_check.py -q."
     },
     {
       "id": 18,
       "subject": "Task 18: README/docs update + plan-coverage review + final commit",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-05-20",
       "blockedBy": [11, 12, 13, 16, 17],
       "description": "README Phase 1 surface (entity/tools/agents/commands/llm gate); coverage self-review mapping design 13 criteria 1-8 to tasks; confirm mcp==1.27.1 pinned + fast suite green; flip sidecar to completed; final commit. Files: README.md (mod), .tasks.json (mod). Verify: pytest -m 'not llm' -q green."
     }

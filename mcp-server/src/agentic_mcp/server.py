@@ -18,6 +18,9 @@ from . import queries as q_mod
 from . import findings as f_mod
 from . import scope as scope_mod
 from . import validators as v_mod
+from . import dispatch as dispatch_mod
+from . import loops as loops_mod
+from . import stability as stability_mod
 
 
 def _db_path() -> Path:
@@ -65,6 +68,15 @@ async def list_tools() -> list[Tool]:
                     "failed_layer": {"type": "string"},
                     "verdict": {"type": "string"},
                     "subtype": {"type": "string"},
+                    "dispatched_at": {"type": "string"},
+                    "finding_id": {"type": "string"},
+                    "started_at": {"type": "string"},
+                    "iteration_count": {"type": "integer"},
+                    "diagnostic_fired_at": {"type": "string"},
+                    "resolved_at": {"type": "string"},
+                    "criterion_index": {"type": "integer"},
+                    "loop_iteration": {"type": "integer"},
+                    "triage": {"type": "string"},
                 },
                 "required": ["type", "status", "owner", "body"],
             },
@@ -180,6 +192,91 @@ async def list_tools() -> list[Tool]:
                 "required": ["body"],
             },
         ),
+        Tool(
+            name="dispatch_spec",
+            description="Stamp a Spec as dispatched (locks its criteria; idempotent).",
+            inputSchema={
+                "type": "object",
+                "properties": {"spec_id": {"type": "string"}},
+                "required": ["spec_id"],
+            },
+        ),
+        Tool(
+            name="start_critical_loop",
+            description="Open a CriticalLoop tracking a Critical finding.",
+            inputSchema={
+                "type": "object",
+                "properties": {"finding_id": {"type": "string"}},
+                "required": ["finding_id"],
+            },
+        ),
+        Tool(
+            name="advance_critical_loop",
+            description="Increment a loop's iteration; fires the diagnostic flag at iteration 3.",
+            inputSchema={
+                "type": "object",
+                "properties": {"loop_id": {"type": "string"}},
+                "required": ["loop_id"],
+            },
+        ),
+        Tool(
+            name="resolve_critical_loop",
+            description="Mark a CriticalLoop resolved.",
+            inputSchema={
+                "type": "object",
+                "properties": {"loop_id": {"type": "string"}},
+                "required": ["loop_id"],
+            },
+        ),
+        Tool(
+            name="get_open_loops",
+            description="List open CriticalLoops, optionally filtered by scope (cross-session resume).",
+            inputSchema={
+                "type": "object",
+                "properties": {"scope": {"type": "string"}},
+            },
+        ),
+        Tool(
+            name="record_triage",
+            description="Set fix-in-pr/backlog triage on an Important finding.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "finding_id": {"type": "string"},
+                    "decision": {"type": "string"},
+                },
+                "required": ["finding_id", "decision"],
+            },
+        ),
+        Tool(
+            name="log_retro",
+            description="Write a Retro tagged by failed_layer; optionally link caused-by a finding.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "body": {"type": "string"},
+                    "failed_layer": {"type": "string"},
+                    "caused_by_finding_id": {"type": "string"},
+                    "scope": {"type": "string"},
+                },
+                "required": ["body", "failed_layer"],
+            },
+        ),
+        Tool(
+            name="detect_stability_contradiction",
+            description="Log a soft Pattern if a Critical hits a byte-identical file the reviewer previously approved. Records only; never suppresses the Critical.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string"},
+                    "path": {"type": "string"},
+                    "commit_before": {"type": "string"},
+                    "commit_after": {"type": "string"},
+                    "prior_approval": {"type": "boolean"},
+                },
+                "required": ["repo", "path", "commit_before", "commit_after", "prior_approval"],
+            },
+        ),
     ]
 
 
@@ -226,6 +323,34 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 recent_files=arguments.get("recent_files"),
             )
             return _ok({"scope": s})
+        if name == "dispatch_spec":
+            return _ok({"dispatched_at": dispatch_mod.dispatch_spec(conn, arguments["spec_id"])})
+        if name == "start_critical_loop":
+            return _ok({"id": loops_mod.start_critical_loop(conn, arguments["finding_id"])})
+        if name == "advance_critical_loop":
+            return _ok(loops_mod.advance_critical_loop(conn, arguments["loop_id"]))
+        if name == "resolve_critical_loop":
+            loops_mod.resolve_critical_loop(conn, arguments["loop_id"])
+            return _ok({"ok": True})
+        if name == "get_open_loops":
+            return _ok(loops_mod.get_open_loops(conn, arguments.get("scope")))
+        if name == "record_triage":
+            f_mod.record_triage(conn, arguments["finding_id"], arguments["decision"])
+            return _ok({"ok": True})
+        if name == "log_retro":
+            rid = f_mod.log_retro(
+                conn, body=arguments["body"], failed_layer=arguments["failed_layer"],
+                caused_by_finding_id=arguments.get("caused_by_finding_id"),
+                scope=arguments.get("scope"),
+            )
+            return _ok({"id": rid})
+        if name == "detect_stability_contradiction":
+            pid = stability_mod.detect_stability_contradiction(
+                conn, arguments["repo"], arguments["path"],
+                arguments["commit_before"], arguments["commit_after"],
+                arguments["prior_approval"],
+            )
+            return _ok({"pattern_id": pid})
         return _err(f"unknown tool: {name}")
     except Exception as e:
         return _err(f"{type(e).__name__}: {e}")

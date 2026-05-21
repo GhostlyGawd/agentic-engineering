@@ -8,6 +8,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from . import migrations
+
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 
@@ -15,6 +17,7 @@ def connect(path: str | Path) -> sqlite3.Connection:
     """Open a SQLite connection. Caller manages close()."""
     conn = sqlite3.connect(str(path))
     conn.execute("PRAGMA foreign_keys = ON")
+    migrations.apply_migrations(conn)  # upgrade existing DBs on open
     return conn
 
 
@@ -27,5 +30,6 @@ def init_db(path: str | Path) -> None:
         with _SCHEMA_PATH.open("r", encoding="utf-8") as f:
             conn.executescript(f.read())
         conn.commit()
+        migrations.apply_migrations(conn)  # layer Phase 1 on fresh schema
     finally:
         conn.close()
