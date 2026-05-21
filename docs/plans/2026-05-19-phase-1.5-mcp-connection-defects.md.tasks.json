@@ -1,0 +1,55 @@
+{
+  "planPath": "docs/plans/2026-05-19-phase-1.5-mcp-connection-defects.md",
+  "lastUpdated": "2026-05-19T00:00:00Z",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: init_project writes self-resolving .mcp.json",
+      "status": "pending",
+      "blockedBy": [],
+      "description": "**Goal:** init_project.run() registers agentic-graph in the project's .mcp.json with a launchable command (sys.executable), merging not clobbering.\n\n**Files:** mcp-server/src/agentic_mcp/init_project.py, mcp-server/tests/test_init_project.py\n\n```json:metadata\n{\"files\":[\"mcp-server/src/agentic_mcp/init_project.py\",\"mcp-server/tests/test_init_project.py\"],\"verifyCommand\":\"cd mcp-server && .\\\\.venv\\\\Scripts\\\\python.exe -m pytest tests/test_init_project.py -q\",\"acceptanceCriteria\":[\".mcp.json written with mcpServers.agentic-graph\",\"command is sys.executable\",\"args == [-m, agentic_mcp.server]\",\"env.AGENTIC_DB_PATH -> <root>/.agentic/graph.db\",\"existing unrelated server preserved\"]}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: /agentic:init docs reflect registration + reload",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** commands/init.md states a .mcp.json is written and the user must reload Claude Code; verify via claude mcp list.\n\n**Files:** commands/init.md\n\n```json:metadata\n{\"files\":[\"commands/init.md\"],\"verifyCommand\":\"manual read\",\"acceptanceCriteria\":[\"doc states .mcp.json registers agentic-graph\",\"instructs restart/reconnect + claude mcp list Connected\",\"stale PATH note replaced\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: stop tracking .mcp.json; generate per-machine",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Remove repo .mcp.json from VCS, gitignore it, document generating via init.\n\n**Files:** .gitignore, README.md, .mcp.json (git rm --cached)\n\n```json:metadata\n{\"files\":[\".gitignore\",\"README.md\",\".mcp.json\"],\"verifyCommand\":\"mcp-server\\\\.venv\\\\Scripts\\\\python.exe -m agentic_mcp.init_project --root . ; claude mcp list | Select-String agentic-graph ; git ls-files .mcp.json\",\"acceptanceCriteria\":[\".mcp.json in .gitignore\",\"not tracked\",\"README install includes generate+reload\",\"fresh init regenerates working config\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: e2e harness stages MCP + UTF-8 decode",
+      "status": "pending",
+      "blockedBy": [],
+      "description": "**Goal:** run_claude_headless loads agentic-graph deterministically (--mcp-config) and decodes CLI output as UTF-8.\n\n**Files:** mcp-server/tests/llm_harness.py, mcp-server/tests/test_phase1_e2e.py\n\n```json:metadata\n{\"files\":[\"mcp-server/tests/llm_harness.py\",\"mcp-server/tests/test_phase1_e2e.py\"],\"verifyCommand\":\"cd mcp-server && .\\\\.venv\\\\Scripts\\\\python.exe -m pytest tests/test_llm_harness.py::test_claude_headless_roundtrips -m llm -q\",\"acceptanceCriteria\":[\"stage_mcp_config helper\",\"--mcp-config + --strict-mcp-config\",\"encoding=utf-8 errors=replace\",\"each e2e test stages before its call\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: harden harness vs background hangs/orphans",
+      "status": "pending",
+      "blockedBy": [3],
+      "description": "**Goal:** Prevent claude -p hanging on agent background tasks; reap process tree on timeout.\n\n**Files:** mcp-server/tests/llm_harness.py, mcp-server/tests/test_phase1_e2e.py\n\n```json:metadata\n{\"files\":[\"mcp-server/tests/llm_harness.py\",\"mcp-server/tests/test_phase1_e2e.py\"],\"verifyCommand\":\"cd mcp-server && .\\\\.venv\\\\Scripts\\\\python.exe -m pytest tests/test_llm_harness.py::test_kill_tree_tolerates_dead_pid -q\",\"acceptanceCriteria\":[\"prompt foreground-only\",\"TimeoutExpired -> taskkill /F /T /PID\",\"fast unit test for _kill_tree\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: re-run llm gate; xfail stubborn if flaky",
+      "status": "pending",
+      "blockedBy": [3, 4],
+      "description": "**Goal:** Record post-fix real-agent gate state; xfail stubborn (strict=False) if still non-deterministic.\n\n**Files:** mcp-server/tests/test_phase1_e2e.py (conditional)\n\n```json:metadata\n{\"files\":[\"mcp-server/tests/test_phase1_e2e.py\"],\"verifyCommand\":\"cd mcp-server && .\\\\.venv\\\\Scripts\\\\python.exe -m pytest -m llm -q\",\"acceptanceCriteria\":[\"llm gate run; outcomes in commit msg\",\"mixed + contrarian pass un-xfailed\",\"stubborn passes or xfail strict=False citing plan\"]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: dogfood Retros + correct README status",
+      "status": "pending",
+      "blockedBy": [2, 5],
+      "description": "**Goal:** Log connection/integration defects via log_retro; correct README to match reality.\n\n**Files:** README.md; graph writes via log_retro\n\n```json:metadata\n{\"files\":[\"README.md\"],\"verifyCommand\":\"query_graph type=Retro ; git diff README.md\",\"acceptanceCriteria\":[\"Retro failed_layer=config\",\"Retro failed_layer=test-harness\",\"README notes per-machine .mcp.json + e2e staging\"]}\n```"
+    }
+  ]
+}
