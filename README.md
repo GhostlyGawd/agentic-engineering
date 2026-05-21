@@ -132,6 +132,13 @@ All 102 fast tests should pass (the 4 `llm`-marked exit-gate tests are
 deselected by default; run them with `pytest -m llm` against a live `claude`
 CLI session).
 
+Then register the MCP server for this checkout and reload Claude Code:
+
+    # writes a .mcp.json pointing at this venv's python (per-machine, git-ignored)
+    .\.venv\Scripts\python.exe -m agentic_mcp.init_project --root ..
+    # restart Claude Code, then confirm:
+    claude mcp list   # agentic-graph ... - Connected
+
 To install as a Claude Code plugin: `/plugin install` from the repo root, then
 let the SessionStart hook walk up to find `./.agentic/` in any subdirectory.
 
