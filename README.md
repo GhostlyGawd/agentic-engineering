@@ -128,7 +128,9 @@ pip install -e ".[dev]"
 pytest -v
 ```
 
-All 65 tests should pass.
+All 102 fast tests should pass (the 4 `llm`-marked exit-gate tests are
+deselected by default; run them with `pytest -m llm` against a live `claude`
+CLI session).
 
 To install as a Claude Code plugin: `/plugin install` from the repo root, then
 let the SessionStart hook walk up to find `./.agentic/` in any subdirectory.
