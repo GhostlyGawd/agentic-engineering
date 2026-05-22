@@ -190,7 +190,7 @@ CREATE TABLE IF NOT EXISTS retro (
   summary TEXT,
   tags TEXT,
   scope TEXT,
-  failed_layer TEXT CHECK(failed_layer IN ('spec','implementation','review','unknowable'))
+  failed_layer TEXT CHECK(failed_layer IN ('spec','implementation','integration','review','unknowable'))
 );
 
 CREATE TABLE IF NOT EXISTS arch_debt (

@@ -8,7 +8,7 @@ from . import nodes
 
 VALID_SEVERITIES = {"Critical", "Important", "Suggested", "Strength"}
 VALID_TRIAGE = {"fix-in-pr", "backlog"}
-VALID_FAILED_LAYERS = {"spec", "implementation", "review", "unknowable"}
+VALID_FAILED_LAYERS = {"spec", "implementation", "integration", "review", "unknowable"}
 
 
 def log_finding(

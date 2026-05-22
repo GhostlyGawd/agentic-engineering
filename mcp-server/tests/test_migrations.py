@@ -16,7 +16,7 @@ def test_fresh_db_gets_phase1_schema(tmp_db_path):
         tables = {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         assert "critical_loop" in tables
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == migrations.SCHEMA_VERSION
     finally:
         conn.close()
 
@@ -29,7 +29,7 @@ def test_migration_is_idempotent(tmp_db_path):
         migrations.apply_migrations(conn)  # second explicit run
         after = _columns(conn, "finding")
         assert before == after
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == migrations.SCHEMA_VERSION
     finally:
         conn.close()
 
@@ -47,6 +47,6 @@ def test_upgrades_phase0_db(tmp_db_path):
     conn = db.connect(tmp_db_path)
     try:
         assert "dispatched_at" in _columns(conn, "spec")
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == migrations.SCHEMA_VERSION
     finally:
         conn.close()
