@@ -138,7 +138,7 @@ pip install -e ".[dev]"
 pytest -v
 ```
 
-All 106 fast tests should pass (the 4 `llm`-marked exit-gate tests are
+All 107 fast tests should pass (the 4 `llm`-marked exit-gate tests are
 deselected by default; run them with `pytest -m llm` against a live `claude`
 CLI session).
 

@@ -75,3 +75,7 @@ def cli() -> None:
     args = p.parse_args()
     run(args.root, args.scope_mode)
     print(f"agentic: initialized at {Path(args.root).resolve() / '.agentic'}")
+
+
+if __name__ == "__main__":
+    cli()

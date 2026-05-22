@@ -60,3 +60,17 @@ def test_init_merges_existing_mcp_config(tmp_path):
     cfg = json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8"))
     assert "other" in cfg["mcpServers"]          # preserved
     assert "agentic-graph" in cfg["mcpServers"]  # added
+
+
+def test_module_entrypoint_runs(tmp_path):
+    # The README and /agentic:init document `python -m agentic_mcp.init_project`;
+    # that only works if the module has a __main__ guard. Guard against silent no-op.
+    import subprocess
+    proc = subprocess.run(
+        [sys.executable, "-m", "agentic_mcp.init_project",
+         "--root", str(tmp_path), "--scope-mode", "isolated"],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert (tmp_path / ".agentic" / "graph.db").exists()
+    assert (tmp_path / ".mcp.json").exists()
