@@ -1,6 +1,8 @@
 import json
 import sqlite3
+import sys
 import pytest
+from pathlib import Path
 from agentic_mcp import init_project, db
 
 
@@ -37,3 +39,24 @@ def test_init_is_nondestructive(tmp_path):
     # Config updated:
     cfg = json.loads((tmp_path / ".agentic" / "config.json").read_text())
     assert cfg["scope_mode"] == "workspace"
+
+
+def test_init_writes_resolvable_mcp_config(tmp_path):
+    init_project.run(tmp_path, "isolated")
+    cfg = json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8"))
+    srv = cfg["mcpServers"]["agentic-graph"]
+    assert Path(srv["command"]).exists(), srv["command"]
+    assert srv["command"] == sys.executable
+    assert srv["args"] == ["-m", "agentic_mcp.server"]
+    assert srv["env"]["AGENTIC_DB_PATH"].endswith("graph.db")
+    assert Path(srv["env"]["AGENTIC_DB_PATH"]).is_absolute()
+
+
+def test_init_merges_existing_mcp_config(tmp_path):
+    (tmp_path / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"other": {"command": "x"}}}), encoding="utf-8"
+    )
+    init_project.run(tmp_path, "isolated")
+    cfg = json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8"))
+    assert "other" in cfg["mcpServers"]          # preserved
+    assert "agentic-graph" in cfg["mcpServers"]  # added

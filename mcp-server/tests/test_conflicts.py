@@ -44,6 +44,7 @@ def test_record_preference_writes_only_inside_agentic(tmp_path):
     conflicts.record_preference(project_root=tmp_path, chosen="use-ours")
     compat = json.loads((tmp_path / ".agentic" / "compatibility.json").read_text())
     assert compat["choice"] == "use-ours"
-    # Confirm nothing else was created at project root.
-    others = [p.name for p in tmp_path.iterdir() if p.name != ".agentic"]
+    # Confirm nothing else was created at project root, except the .mcp.json
+    # that init now writes to register the agentic-graph MCP server.
+    others = [p.name for p in tmp_path.iterdir() if p.name not in {".agentic", ".mcp.json"}]
     assert others == []

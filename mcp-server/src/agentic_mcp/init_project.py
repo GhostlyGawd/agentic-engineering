@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -36,6 +37,34 @@ def run(project_root: Path | str, scope_mode: str = "isolated") -> None:
     compat_path = agentic / "compatibility.json"
     if not compat_path.exists():
         compat_path.write_text("{}\n", encoding="utf-8")
+
+    _write_mcp_config(root)
+
+
+def _write_mcp_config(root: Path) -> None:
+    """Register agentic-graph using the CURRENT interpreter's absolute path.
+
+    sys.executable is the venv python that ran agentic-mcp-init, so the command
+    is always resolvable on this machine without relying on PATH. Merge into any
+    existing .mcp.json rather than clobbering other servers.
+    """
+    mcp_path = root / ".mcp.json"
+    if mcp_path.exists():
+        try:
+            cfg = json.loads(mcp_path.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            cfg = {}
+    else:
+        cfg = {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    servers = cfg.setdefault("mcpServers", {})
+    servers["agentic-graph"] = {
+        "command": sys.executable,
+        "args": ["-m", "agentic_mcp.server"],
+        "env": {"AGENTIC_DB_PATH": str((root / ".agentic" / "graph.db").resolve())},
+    }
+    mcp_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
 
 
 def cli() -> None:

@@ -18,6 +18,16 @@ a named feedback loop with both an observable signal and a fix path.
 State lives in `./.agentic/graph.db` (SQLite). All durable writes go through
 the bundled stdio MCP server.
 
+> **Correction (2026-05-19):** the `agentic-graph` MCP server is now registered
+> **per-machine** by `/agentic:init`, which writes a git-ignored `.mcp.json`
+> pointing at the plugin venv's interpreter (`<venv>\python.exe -m
+> agentic_mcp.server`). Earlier builds shipped a bare `agentic-mcp` command that
+> was not on PATH and **never connected** to Claude Code — so restart Claude Code
+> after init and confirm with `claude mcp list`. The live `llm` e2e likewise
+> stages this registration into its test project (`--mcp-config`); with it, all
+> three real-agent scenarios pass deterministically. See
+> `docs/plans/2026-05-19-phase-1.5-mcp-connection-defects.md`.
+
 See `agentic-engineering-system-prd-v3.md` (in this repo root) for the full
 PRD: motivation, core mechanics, gating decisions, and the Phase 0 - Phase 4
 roadmap.
@@ -128,9 +138,16 @@ pip install -e ".[dev]"
 pytest -v
 ```
 
-All 102 fast tests should pass (the 4 `llm`-marked exit-gate tests are
+All 106 fast tests should pass (the 4 `llm`-marked exit-gate tests are
 deselected by default; run them with `pytest -m llm` against a live `claude`
 CLI session).
+
+Then register the MCP server for this checkout and reload Claude Code:
+
+    # writes a .mcp.json pointing at this venv's python (per-machine, git-ignored)
+    .\.venv\Scripts\python.exe -m agentic_mcp.init_project --root ..
+    # restart Claude Code, then confirm:
+    claude mcp list   # agentic-graph ... - Connected
 
 To install as a Claude Code plugin: `/plugin install` from the repo root, then
 let the SessionStart hook walk up to find `./.agentic/` in any subdirectory.
