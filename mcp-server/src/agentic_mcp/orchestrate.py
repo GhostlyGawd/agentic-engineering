@@ -296,17 +296,20 @@ def tick(
             loops.resolve_critical_loop(conn, recovered["id"])
         result["merged"].append(tid)
 
-    # 8. Failed launches: same recovery as NEEDS_FIXING - reset to 'pending' and
-    # release the claim so the task re-enters the ready set next tick (otherwise
-    # it stays in_progress with a held claim, stranding its scope forever). Still
-    # recorded in `failed` for visibility. Like NEEDS_FIXING this has no retry cap
-    # yet (disclosed limitation) - a persistently failing task re-dispatches each
-    # tick.
+    # 8. Failed launches: route through _handle_failure, which records a
+    # CriticalLoop strike. Strikes 1 and 2 reset the task to 'pending' and
+    # release the claim so it re-enters the ready set next tick; the 3rd strike
+    # escalates instead (status='escalated', no re-dispatch). An escalating
+    # launch failure is recorded in BOTH result["failed"] (operational
+    # visibility - the launch did fail this tick) and result["escalations"]
+    # (its terminal state); this double-surfacing is intentional.
     for r in results:
         if not r.get("ok"):
             tid = r["task_id"]
             _handle_failure(conn, tid, claim_ids[tid],
                             r.get("error", "launch failed"), result)
+            # Intentional double-surface: a launch failure that escalates lands
+            # in both `failed` (this tick's failure) and `escalations` (terminal).
             result["failed"].append(tid)
 
     # 9. Return the tick summary.

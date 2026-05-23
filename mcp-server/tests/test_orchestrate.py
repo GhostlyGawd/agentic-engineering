@@ -367,6 +367,9 @@ def test_retry_cap_escalates_on_third_failure(tmp_db_path):
                               merge_fn=fake_merge_ok, review_fn=fake_review_clean)
         assert nodes.get_node(conn, t1)["status"] == "escalated"
         assert t1 in {e["task_id"] for e in r3["escalations"]}
+        # Intentional double-surface: an escalating launch failure appears in
+        # both `failed` (this tick's failure) and `escalations` (terminal state).
+        assert t1 in r3["failed"]
         loop = orchestrate._find_open_dispatch_loop(conn, t1)
         assert loop["iteration_count"] == 3
         assert loop["diagnostic_fired_at"] is not None
