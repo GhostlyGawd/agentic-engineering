@@ -21,6 +21,9 @@ from . import validators as v_mod
 from . import dispatch as dispatch_mod
 from . import loops as loops_mod
 from . import stability as stability_mod
+from . import claims as claims_mod
+from . import weeding as weeding_mod
+from . import calibration as calib_mod
 
 
 def _db_path() -> Path:
@@ -277,6 +280,73 @@ async def list_tools() -> list[Tool]:
                 "required": ["repo", "path", "commit_before", "commit_after", "prior_approval"],
             },
         ),
+        Tool(
+            name="claim_scope",
+            description="Record a held scope claim for a task; errors if it overlaps an open claim.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "scope_paths": {"type": "array", "items": {"type": "string"}},
+                    "worktree": {"type": "string"},
+                    "branch": {"type": "string"},
+                },
+                "required": ["task_id", "scope_paths"],
+            },
+        ),
+        Tool(
+            name="release_claim",
+            description="Release a held scope claim by id.",
+            inputSchema={
+                "type": "object",
+                "properties": {"claim_id": {"type": "string"}},
+                "required": ["claim_id"],
+            },
+        ),
+        Tool(
+            name="detect_overlap",
+            description="Return the maximum non-overlapping batch from candidate task scope specs.",
+            inputSchema={
+                "type": "object",
+                "properties": {"candidates": {"type": "array", "items": {"type": "object"}}},
+                "required": ["candidates"],
+            },
+        ),
+        Tool(
+            name="flag_stale",
+            description="Flag dispatched Specs untouched beyond N days; returns stale spec ids.",
+            inputSchema={
+                "type": "object",
+                "properties": {"days": {"type": "integer", "default": 14}},
+            },
+        ),
+        Tool(
+            name="record_outcome",
+            description="Append a hit/miss observation to a role's calibration record.",
+            inputSchema={
+                "type": "object",
+                "properties": {"role": {"type": "string"}, "hit": {"type": "boolean"}},
+                "required": ["role", "hit"],
+            },
+        ),
+        Tool(
+            name="get_calibration",
+            description="Read a role's calibration row (score + distrusted flag).",
+            inputSchema={
+                "type": "object",
+                "properties": {"role": {"type": "string"}},
+                "required": ["role"],
+            },
+        ),
+        Tool(
+            name="adjust_trust",
+            description="Flip a role's distrust flag if its score crossed the floor/ceiling; reports whether it changed.",
+            inputSchema={
+                "type": "object",
+                "properties": {"role": {"type": "string"}},
+                "required": ["role"],
+            },
+        ),
     ]
 
 
@@ -351,6 +421,26 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 arguments["prior_approval"],
             )
             return _ok({"pattern_id": pid})
+        if name == "claim_scope":
+            cid = claims_mod.claim_scope(
+                conn, arguments["task_id"], arguments["scope_paths"],
+                worktree=arguments.get("worktree"), branch=arguments.get("branch"),
+            )
+            return _ok({"id": cid})
+        if name == "release_claim":
+            claims_mod.release_claim(conn, arguments["claim_id"])
+            return _ok({"ok": True})
+        if name == "detect_overlap":
+            return _ok({"batch": claims_mod.detect_overlap(arguments["candidates"])})
+        if name == "flag_stale":
+            return _ok({"stale": weeding_mod.flag_stale_specs(conn, arguments.get("days", 14))})
+        if name == "record_outcome":
+            calib_mod.record_outcome(conn, arguments["role"], arguments["hit"])
+            return _ok({"ok": True})
+        if name == "get_calibration":
+            return _ok(calib_mod.get_calibration(conn, arguments["role"]))
+        if name == "adjust_trust":
+            return _ok(calib_mod.adjust_trust(conn, arguments["role"]))
         return _err(f"unknown tool: {name}")
     except Exception as e:
         return _err(f"{type(e).__name__}: {e}")

@@ -1,9 +1,35 @@
+import asyncio
 import json
 import os
 import sys
 import pytest
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
+
+from agentic_mcp import server
+
+
+def test_phase2_tools_listed():
+    tools = asyncio.run(server.list_tools())
+    names = {t.name for t in tools}
+    assert {"claim_scope", "release_claim", "detect_overlap", "flag_stale",
+            "record_outcome", "get_calibration", "adjust_trust"} <= names
+    assert len(names) == 25
+
+
+def test_claim_scope_and_overlap_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTIC_DB_PATH", str(tmp_path / "graph.db"))
+    out = asyncio.run(server.call_tool("claim_scope", {"task_id": "t1", "scope_paths": ["src/a/*"]}))
+    assert "id" in json.loads(out[0].text)
+    out2 = asyncio.run(server.call_tool("claim_scope", {"task_id": "t2", "scope_paths": ["src/a/b.py"]}))
+    assert "error" in json.loads(out2[0].text)
+
+
+def test_calibration_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTIC_DB_PATH", str(tmp_path / "graph.db"))
+    asyncio.run(server.call_tool("record_outcome", {"role": "code-reviewer", "hit": False}))
+    out = asyncio.run(server.call_tool("get_calibration", {"role": "code-reviewer"}))
+    assert json.loads(out[0].text)["observations"] == 1
 
 
 @pytest.mark.asyncio
