@@ -18,8 +18,8 @@ the user.
 
 ### 1. Weed
 
-Call `flag_stale(weed_days=<N>)` against all Specs and open Tasks not touched in
-the threshold window (default 14 days). Surface the stale set to the user. Never
+Call `flag_stale(days=<N>)` against all dispatched Specs not touched in the
+threshold window (default 14 days). Surface the stale set to the user. Never
 auto-close; the user decides.
 
 Also surface any dispatched Spec with no commit progress past the weed threshold
@@ -27,26 +27,29 @@ Also surface any dispatched Spec with no commit progress past the weed threshold
 
 ### 2. Compute the ready set
 
-A Task is ready when:
-- its parent Spec is in `dispatched` status, AND
-- every `blockedBy` dependency is `resolved`.
+Compute the ready set by querying Task status plus the `implements` (Task->Spec)
+and `depends-on` (Task->prerequisite) relations: a Task is ready when its parent
+Spec is `dispatched` and every `depends-on` dependency is `resolved`. (This logic
+is implemented and unit-tested in `scheduler.py` as the reference; the
+orchestrator reproduces it via the graph query tools.)
 
-Compute this via per-task graph lookups (`scheduler.ready_tasks`). This is
-intentionally simple - fine at tick-scale; revisit with batch JOINs only if
-task counts grow large.
+This is intentionally simple - per-task graph lookups, fine at tick-scale;
+revisit with batch JOINs only if task counts grow large.
 
 ### 3. Overlap filter (serial-when-shared)
 
-Each ready Task carries a declared scope (modules/files it will touch, derived
-from its Spec). Call `detect_overlap(task_ids=<ready_set>)` to partition the
-ready set into a non-overlapping batch (safe to run in parallel this tick) and a
-held set (they share scope with an already-claimed task and must wait for a later
-serial tick).
+Each ready Task must carry a declared scope (the modules/files it will touch,
+derived from the Spec by the orchestrator) and record it via `claim_scope`. Call
+`detect_overlap(candidates=<list of {task_id, scope_paths} dicts>)` to partition
+the ready set into a non-overlapping batch (safe to run in parallel this tick)
+and a held set (they share scope with an already-claimed task and must wait for a
+later serial tick).
 
 For each task in the runnable batch, call `claim_scope(task_id=<id>,
-scope_paths=<paths>, worktree=<path>, branch=<name>)` to hold the claim. If
-`claim_scope` returns a conflict (a race since `detect_overlap`), remove that
-task from the batch and continue with the rest.
+scope_paths=<paths>, worktree=<path>, branch=<name>)` to hold the claim;
+`claim_scope` returns a `claim_id` (a UUID, NOT the task id) that you must keep
+for `release_claim`. If `claim_scope` returns a conflict (a race since
+`detect_overlap`), remove that task from the batch and continue with the rest.
 
 ### 4. Dispatch
 
@@ -69,9 +72,11 @@ pass/fail). Do NOT retain worker transcripts.
 blind-parallel; the panel manages the critical loop and fires the 3-iteration
 diagnostic).
 
-**Reviewer CLEAN** -> call `merge_order` to get the DAG-safe merge sequence;
-merge each CLEAN branch into the integration branch in that order; call
-`release_claim(task_id=<id>)` after each merge.
+**Reviewer CLEAN** -> merge CLEAN branches in dependency order (topological by
+`depends-on`); the `merge_order` reference implementation lives in `scheduler.py`.
+Merge each CLEAN branch into the integration branch in that order; call
+`release_claim(claim_id=<id>)` (the UUID from `claim_scope`, not the task id)
+after each merge.
 
 **Conflict or escalation** -> surface to the user with the branch name and
 finding summary. Leave the branch unmerged and the Claim held. Do NOT

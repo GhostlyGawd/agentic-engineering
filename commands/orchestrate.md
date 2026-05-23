@@ -26,34 +26,39 @@ loops; `/loop` or cron owns the cadence.
 
 Each invocation is one stateless tick in a fresh process. It hydrates all state
 from the graph at start, does one tick, and exits. No prior-tick context is
-retained. This matches the same discipline the `pm` skill follows.
+retained.
 
 ## The 7-step tick
 
 ### Step 1 - Weed
 
-Call `flag_stale(weed_days=<--weed-days>)` against all Specs and open Tasks.
-Surface the stale set (nodes untouched > N days) to the user. Also surface any
-dispatched Spec with no commit progress past the threshold.
+Call `flag_stale(days=<--weed-days>)` against all dispatched Specs. Surface the
+stale set (nodes untouched > N days) to the user. Also surface any dispatched
+Spec with no commit progress past the threshold.
 
 Policy: surface only, never auto-close. The user decides on every stale node.
 
 ### Step 2 - Compute ready set
 
-A Task is ready when its parent Spec is `dispatched` AND every `blockedBy`
-dependency is `resolved`. Use `scheduler.ready_tasks()` to compute this set via
-per-task graph lookups.
+Compute the ready set by querying Task status plus the `implements` (Task->Spec)
+and `depends-on` (Task->prerequisite) relations: a Task is ready when its parent
+Spec is `dispatched` and every `depends-on` dependency is `resolved`. (This logic
+is implemented and unit-tested in `scheduler.py` as the reference; the
+orchestrator reproduces it via the graph query tools, with per-task graph
+lookups.)
 
 ### Step 3 - Overlap filter
 
 Partition the ready set into a runnable batch and a held set using
-`detect_overlap(task_ids=<ready_set>)`. Tasks that share declared scope with an
-already-held Claim wait for a later serial tick (serial-when-shared).
+`detect_overlap(candidates=<list of {task_id, scope_paths} dicts>)`. Tasks that
+share declared scope with an already-held Claim wait for a later serial tick
+(serial-when-shared).
 
 For each task in the runnable batch, call `claim_scope(task_id=<id>,
-scope_paths=<paths>, worktree=<path>, branch=<name>)` to record the hold. On a
-conflict return from `claim_scope` (rare race), drop that task from the batch
-and continue.
+scope_paths=<paths>, worktree=<path>, branch=<name>)` to record the hold;
+`claim_scope` returns a `claim_id` (a UUID, NOT the task id) - keep it for
+`release_claim`. On a conflict return from `claim_scope` (rare race), drop that
+task from the batch and continue.
 
 ### Step 4 - Dispatch pool
 
@@ -75,9 +80,11 @@ retain worker transcripts.
 (full Phase-1 panel: spec-checker gate, then code-reviewer + contrarian
 blind-parallel, managing the critical loop with 3-iteration diagnostic).
 
-**Reviewer CLEAN** -> call `merge_order()` for the DAG-safe sequence; merge each
-CLEAN branch into the integration branch in that order; call
-`release_claim(task_id=<id>)` after each merge.
+**Reviewer CLEAN** -> merge CLEAN branches in dependency order (topological by
+`depends-on`); the `merge_order` reference implementation lives in `scheduler.py`.
+Merge each CLEAN branch into the integration branch in that order; call
+`release_claim(claim_id=<id>)` (the UUID from `claim_scope`, not the task id)
+after each merge.
 
 **Conflict or escalation** -> surface to the user (branch name + finding
 summary). Leave the branch unmerged, the Claim held. Do NOT auto-resolve.
@@ -111,11 +118,12 @@ process.
 | Weed threshold | 14 days | `--weed-days N` to override |
 | Merge policy | auto-merge on reviewer-CLEAN | full autonomy |
 | Conflicts / escalations | always surfaced, never auto-resolved | human decision point |
-| Tick termination | exit after one tick | `/loop`/cron idles while ready tasks or open critical loops remain |
+| Tick termination | always exit after one tick | the tick never loops; `/loop`/cron decides whether to fire the next one |
 
-The tick idles (no hard global stop condition) when there are no ready tasks and
-no open CriticalLoops. `/loop` polls by firing another tick; when both queues are
-empty the tick summary says so and exits normally.
+The tick always exits after one beat. `/loop` (or cron) owns the cadence: it
+keeps firing ticks (no hard global stop condition) while ready tasks or open
+CriticalLoops remain, and idles once both queues are empty. Each tick summary
+reports whether work or open loops remain so the cadence layer can decide.
 
 ## ASCII note
 
