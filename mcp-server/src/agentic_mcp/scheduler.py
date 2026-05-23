@@ -35,8 +35,12 @@ def _deps_resolved(conn: sqlite3.Connection, task_id: str) -> bool:
 
 
 def ready_tasks(conn: sqlite3.Connection) -> list[dict]:
+    placeholders = ",".join("?" * len(READY_STATUSES))
     out: list[dict] = []
-    for (tid,) in conn.execute("SELECT id FROM task WHERE status IN ('pending','ready')"):
+    for (tid,) in conn.execute(
+        f"SELECT id FROM task WHERE status IN ({placeholders})",
+        tuple(sorted(READY_STATUSES)),
+    ):
         if _parent_spec_dispatched(conn, tid) and _deps_resolved(conn, tid):
             out.append(nodes.get_node(conn, tid))
     return out
@@ -51,6 +55,8 @@ def merge_order(task_ids: list[str], edges: list[tuple[str, str]]) -> list[str]:
         deps.setdefault(blocker, set())
     ordered: list[str] = []
     done: set[str] = set()
+    # O(n^2) worst case (re-scans nodes each pass); fine at tick-scale DAG sizes
+    # (tens of tasks). Revisit with Kahn + indegree map if batches grow large.
     while len(ordered) < len(deps):
         progressed = False
         for t in deps:

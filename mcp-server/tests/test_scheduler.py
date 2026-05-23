@@ -53,6 +53,16 @@ def test_ready_unblocks_after_dependency_resolved(tmp_db_path):
         conn.close()
 
 
+def test_ready_includes_ready_status_tasks(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t = _task(conn, spec, status="ready")
+        assert t in {x["id"] for x in scheduler.ready_tasks(conn)}
+    finally:
+        conn.close()
+
+
 def test_merge_order_is_topological():
     # edges are (task, dependency): b depends-on a, c depends-on b
     order = scheduler.merge_order(["a", "b", "c"], [("b", "a"), ("c", "b")])
