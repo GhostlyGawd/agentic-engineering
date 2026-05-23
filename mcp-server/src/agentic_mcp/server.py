@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -24,14 +23,6 @@ from . import stability as stability_mod
 from . import claims as claims_mod
 from . import weeding as weeding_mod
 from . import calibration as calib_mod
-
-
-def _db_path() -> Path:
-    raw = os.environ.get("AGENTIC_DB_PATH", "./.agentic/graph.db")
-    p = Path(raw).resolve()
-    if not p.exists():
-        db_mod.init_db(p)
-    return p
 
 
 def _ok(data) -> list[TextContent]:
@@ -352,7 +343,7 @@ async def list_tools() -> list[Tool]:
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-    conn = db_mod.connect(_db_path())
+    conn = db_mod.connect(db_mod.resolve_db_path())
     try:
         if name == "create_node":
             ntype = arguments.pop("type")

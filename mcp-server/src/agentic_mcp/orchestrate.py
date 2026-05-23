@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -261,16 +260,6 @@ def tick(
 
 
 # --- CLI -------------------------------------------------------------------
-def _db_path() -> Path:
-    # Mirror server._db_path: resolve AGENTIC_DB_PATH (default ./.agentic/graph.db),
-    # init if missing.
-    raw = os.environ.get("AGENTIC_DB_PATH", "./.agentic/graph.db")
-    p = Path(raw).resolve()
-    if not p.exists():
-        db.init_db(p)
-    return p
-
-
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")  # cp1252 default on this box
     parser = argparse.ArgumentParser(prog="agentic_mcp.orchestrate")
@@ -283,7 +272,7 @@ def main() -> int:
     parser.add_argument("--repo", default=".", help="repo root for git seams")
     args = parser.parse_args()
 
-    conn = db.connect(_db_path())
+    conn = db.connect(db.resolve_db_path())
     try:
         result = tick(
             conn, repo=args.repo, pool_size=args.pool, weed_days=args.weed_days
