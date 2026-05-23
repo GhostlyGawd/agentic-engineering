@@ -1,0 +1,73 @@
+{
+  "planPath": "docs/plans/2026-05-23-phase-2-orchestration.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Schema v3 migration (claim + calibration + stale_flagged_at)",
+      "status": "pending",
+      "description": "**Goal:** Extend schema + versioned-migration framework to v3 with claim/calibration tables and spec.stale_flagged_at, idempotently.\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/schema.sql\", \"mcp-server/src/agentic_mcp/migrations.py\", \"mcp-server/tests/test_migrations.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_migrations.py -v\", \"acceptanceCriteria\": [\"fresh init_db is user_version 3 with claim+calibration tables and spec.stale_flagged_at\", \"v2 DB upgrades to v3 without data loss\", \"double apply_migrations is a no-op\"]}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: claims.py (claim_scope, release_claim, detect_overlap)",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Record per-task scope claims, detect overlap vs held claims, compute max non-overlapping batch (serial-when-shared core). Glob-aware.\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/claims.py\", \"mcp-server/tests/test_claims.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_claims.py -v\", \"acceptanceCriteria\": [\"claim_scope inserts held claim, release_claim flips to released\", \"claim_scope raises ClaimConflict on overlap\", \"detect_overlap returns largest disjoint subset deterministically\", \"glob-aware overlap\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: weeding.py (flag_stale + stale-spec detection)",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Surface nodes untouched beyond threshold and dispatched Specs with no progress; stamp/clear spec.stale_flagged_at. Surface only.\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/weeding.py\", \"mcp-server/tests/test_weeding.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_weeding.py -v\", \"acceptanceCriteria\": [\"find_stale_nodes returns old non-terminal nodes, excludes fresh\", \"flag_stale_specs stamps stale and clears recovered\", \"fresh node/spec never flagged\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: calibration.py (record_outcome, get_calibration, adjust_trust)",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Track per-role hit/miss, Laplace-smoothed score, flip distrusted at floor 0.4 / ceiling 0.7.\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/calibration.py\", \"mcp-server/tests/test_calibration.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_calibration.py -v\", \"acceptanceCriteria\": [\"record_outcome upserts and updates smoothed score\", \"get_calibration returns row or neutral default\", \"adjust_trust sets distrusted below floor, clears above ceiling, adjusted True only on change\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Register 7 Phase 2 MCP tools in server.py",
+      "status": "pending",
+      "blockedBy": [1, 2, 3],
+      "description": "**Goal:** Expose claim_scope, release_claim, detect_overlap, flag_stale, record_outcome, get_calibration, adjust_trust (25 total). ClaimConflict via _err.\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/server.py\", \"mcp-server/tests/test_server.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_server.py -v\", \"acceptanceCriteria\": [\"list_tools includes all 7 new tools, total 25\", \"call_tool dispatches each, ClaimConflict via _err not crash\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: Promote llm_harness.py to package + Pool wrapper",
+      "status": "pending",
+      "description": "**Goal:** Move tests/llm_harness.py -> src/agentic_mcp/headless.py (re-export shim) and add Pool(max_workers).run(jobs, launch_fn) with cap+backfill.\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/headless.py\", \"mcp-server/tests/llm_harness.py\", \"mcp-server/tests/test_headless.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_headless.py tests/test_llm_harness.py -v\", \"acceptanceCriteria\": [\"all harness fns importable from agentic_mcp.headless\", \"tests/llm_harness.py re-exports so phase1 e2e passes\", \"Pool caps concurrency at N, backfills, one result per job\"]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: scheduler.py (ready-set + DAG merge order)",
+      "status": "pending",
+      "description": "**Goal:** Pure functions ready_tasks (parent Spec dispatched via 'implements', 'depends-on' deps resolved) and merge_order (topological, cycle->ValueError). Use relations.neighbors. relations table is 'relations'; valid types implements/depends-on (NOT belongs-to/blocked-by).\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/scheduler.py\", \"mcp-server/tests/test_scheduler.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_scheduler.py -v\", \"acceptanceCriteria\": [\"ready_tasks honors implements + depends-on resolution\", \"merge_order topological, raises on cycle\", \"task with unresolved depends-on excluded\"]}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Orchestrator command + agent docs",
+      "status": "pending",
+      "blockedBy": [4, 5, 6],
+      "description": "**Goal:** Author commands/orchestrate.md (single-tick --once/--pool/--weed-days) and agents/orchestrator.md (model: sonnet, implements nothing).\n\n```json:metadata\n{\"files\": [\"commands/orchestrate.md\", \"agents/orchestrator.md\", \"mcp-server/tests/test_agent_docs.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_agent_docs.py -v\", \"acceptanceCriteria\": [\"orchestrator.md frontmatter matches siblings, model: sonnet, implements-nothing + tool refs\", \"orchestrate.md documents single-tick contract + defaults\", \"test_agent_docs passes\"]}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: Phase 2 LLM e2e exit-gate test",
+      "status": "pending",
+      "blockedBy": [4, 5, 6, 7],
+      "description": "**Goal:** llm-marked e2e: two orthogonal Specs build parallel into separate worktrees and merge without collision; weeding surfaces stale node; scripted reviewer miss drives adjust_trust to fire. Deselected by default.\n\n```json:metadata\n{\"files\": [\"mcp-server/tests/test_phase2_e2e.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest -m llm tests/test_phase2_e2e.py -v\", \"acceptanceCriteria\": [\"marked llm + skipif claude not on path\", \"two disjoint specs build parallel + merge no conflict + criteria satisfied\", \"weeding surfaces stale node\", \"calibration adjustment fires + honored\", \"deselected under -m 'not llm'\"]}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 9: Docs - README + router skill (25 tools) + spec status",
+      "status": "pending",
+      "blockedBy": [4],
+      "description": "**Goal:** README Phase 2 section + tool count 18->25; router SKILL.md documents 7 new tools; mark design spec status Implemented.\n\n```json:metadata\n{\"files\": [\"README.md\", \"skills/router/SKILL.md\", \"docs/superpowers/specs/2026-05-23-phase-2-orchestration-design.md\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest -m \\\"not llm\\\" -q\", \"acceptanceCriteria\": [\"README Phase 2 section + 25 tools\", \"router documents 7 new tools\", \"no stale tool-count assertions remain\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-05-23T13:10:00-04:00"
+}
