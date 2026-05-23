@@ -95,7 +95,11 @@ def _real_review(conn, task_id: str, job_result: dict) -> dict:
     the code-reviewer agent, parse its verdict). Kept thin on purpose so this
     module composes cleanly without pulling in the review machinery.
     """
-    return {"verdict": "CLEAN", "reviewer": "code-reviewer", "hit": True}
+    # calibrate=False: this stub's hit=True is a placeholder, not a real review
+    # outcome, so it must NOT bias code-reviewer's calibration on every tick.
+    # Real reviewers (Task 8) omit the flag -> calibrate defaults True.
+    return {"verdict": "CLEAN", "reviewer": "code-reviewer", "hit": True,
+            "calibrate": False}
 
 
 # --- the tick --------------------------------------------------------------
@@ -138,15 +142,18 @@ def tick(
     for c in batch:
         tid = c["task_id"]
         scope_paths = c["scope_paths"]
-        wt, branch = worktree_factory(repo, tid)
+        # Claim FIRST (cheap, conflict-detecting). detect_overlap only sees the
+        # current ready set, NOT held claims from prior ticks, so claim_scope can
+        # still conflict here (e.g. a task stuck in_progress holds an invisible
+        # claim). Claiming before creating the worktree means a ClaimConflict
+        # never leaves an orphaned worktree on disk.
         try:
-            cid = claims.claim_scope(
-                conn, tid, scope_paths, worktree=wt, branch=branch
-            )
+            cid = claims.claim_scope(conn, tid, scope_paths)
         except claims.ClaimConflict:
-            # Another held claim overlaps (e.g. a task left in_progress from a
-            # prior tick); skip - do not dispatch.
+            # An overlapping claim is already held; skip - do not dispatch.
             continue
+        wt, branch = worktree_factory(repo, tid)
+        claims.attach_worktree(conn, cid, wt, branch)
         nodes.update_node(conn, tid, status="in_progress")
         claim_ids[tid] = cid
         branches[tid] = branch
@@ -164,14 +171,20 @@ def tick(
         tid = r["task_id"]
         rv = review_fn(conn, tid, r)
         reviewer = rv["reviewer"]
-        calibration.record_outcome(conn, reviewer, rv["hit"])
-        adj = calibration.adjust_trust(conn, reviewer)
-        if adj["adjusted"] and reviewer not in result["calibrated"]:
-            result["calibrated"].append(reviewer)
+        if rv.get("calibrate", True):
+            calibration.record_outcome(conn, reviewer, rv["hit"])
+            adj = calibration.adjust_trust(conn, reviewer)
+            if adj["adjusted"] and reviewer not in result["calibrated"]:
+                result["calibrated"].append(reviewer)
         if rv["verdict"] == "CLEAN":
             clean_ids.append(tid)
-        # NEEDS_FIXING: leave task in_progress, claim held, no merge - it loops
-        # back into the ready/claimed set on a subsequent tick.
+        else:
+            # NEEDS_FIXING: reset to 'pending' and release the claim so the task
+            # re-enters the ready set next tick (ready_tasks only sees
+            # pending/ready, and a re-claim needs the scope free). Leaving it
+            # in_progress with a held claim would strand it forever.
+            nodes.update_node(conn, tid, status="pending")
+            claims.release_claim(conn, claim_ids[tid])
 
     # 7. Merge CLEAN tasks in dependency (topological) order.
     edges = [
@@ -195,7 +208,7 @@ def tick(
         if not r.get("ok"):
             result["failed"].append(r["task_id"])
 
-    # 9.
+    # 9. Return the tick summary.
     return result
 
 

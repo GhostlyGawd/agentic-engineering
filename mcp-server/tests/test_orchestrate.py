@@ -138,6 +138,52 @@ def test_launch_failure_keeps_task_in_progress_and_claim_held(tmp_db_path):
         conn.close()
 
 
+# --- NEEDS_FIXING resets the task so it re-enters next tick ----------------
+def test_needs_fixing_resets_task_to_pending_and_releases_claim(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+
+        def fake_review_needs_fixing(conn_, tid, r):
+            return {"verdict": "NEEDS_FIXING", "reviewer": "code-reviewer",
+                    "hit": False}
+
+        result = orchestrate.tick(
+            conn, launch_fn=fake_launch_ok, worktree_factory=fake_worktree,
+            merge_fn=fake_merge_ok, review_fn=fake_review_needs_fixing,
+        )
+        assert t1 not in result["merged"]
+        assert t1 not in result["failed"]
+        assert nodes.get_node(conn, t1)["status"] == "pending"  # re-enterable
+        assert _claim_status(conn, t1) == ["released"]
+    finally:
+        conn.close()
+
+
+# --- merge conflict -> escalation, claim stays held ------------------------
+def test_merge_failure_escalates_and_keeps_claim_held(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+
+        def fake_merge_raises(repo, branch):
+            raise RuntimeError("merge conflict")
+
+        result = orchestrate.tick(
+            conn, launch_fn=fake_launch_ok, worktree_factory=fake_worktree,
+            merge_fn=fake_merge_raises, review_fn=fake_review_clean,
+        )
+        esc_ids = {e["task_id"] for e in result["escalations"]}
+        assert t1 in esc_ids
+        assert t1 not in result["merged"]
+        assert nodes.get_node(conn, t1)["status"] != "merged"
+        assert _claim_status(conn, t1) == ["held"]
+    finally:
+        conn.close()
+
+
 # --- 5. contrarian reviewer pushed below floor -> calibration fires --------
 def test_distrusted_reviewer_appears_in_calibrated(tmp_db_path):
     conn = _mk_conn(tmp_db_path)

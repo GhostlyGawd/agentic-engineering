@@ -70,6 +70,19 @@ def claim_scope(
     return cid
 
 
+def attach_worktree(conn: sqlite3.Connection, claim_id: str, worktree: str, branch: str) -> None:
+    """Record the worktree/branch on an already-held claim.
+
+    Lets the orchestrator claim scope FIRST (cheap, conflict-detecting) and only
+    create the worktree once the claim is secured - so a ClaimConflict never
+    leaves an orphaned worktree on disk.
+    """
+    conn.execute(
+        "UPDATE claim SET worktree=?, branch=? WHERE id=?", (worktree, branch, claim_id)
+    )
+    conn.commit()
+
+
 def release_claim(conn: sqlite3.Connection, claim_id: str) -> None:
     cur = conn.execute("UPDATE claim SET status='released' WHERE id=? AND status='held'", (claim_id,))
     conn.commit()

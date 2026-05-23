@@ -22,6 +22,24 @@ def test_claim_then_release(tmp_db_path):
         conn.close()
 
 
+def test_attach_worktree_updates_row(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        cid = claims.claim_scope(conn, "task-1", ["src/a/*"])  # no worktree yet
+        wt, branch = conn.execute(
+            "SELECT worktree, branch FROM claim WHERE id=?", (cid,)
+        ).fetchone()
+        assert wt is None and branch is None
+        claims.attach_worktree(conn, cid, "/wt/task-1", "orch/task-1")
+        wt, branch = conn.execute(
+            "SELECT worktree, branch FROM claim WHERE id=?", (cid,)
+        ).fetchone()
+        assert wt == "/wt/task-1"
+        assert branch == "orch/task-1"
+    finally:
+        conn.close()
+
+
 def test_overlapping_claim_conflicts(tmp_db_path):
     conn = _mk_conn(tmp_db_path)
     try:
