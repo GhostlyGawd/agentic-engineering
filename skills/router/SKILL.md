@@ -60,7 +60,7 @@ through one of them.
 | `claim_scope`      | Record a Task's claimed paths (modules/files it will touch); returns a conflict result if they overlap an open held Claim. Returns a `claim_id` UUID (not the task id) for use with `release_claim`. |
 | `release_claim`    | Release a Claim on task completion/merge. Takes the `claim_id` UUID from `claim_scope`. |
 | `detect_overlap`   | Given a ready-task candidate list (`{task_id, scope_paths}` dicts), return the maximum non-overlapping batch (the scheduler's core serial-when-shared query). |
-| `flag_stale`       | Mark Specs/nodes stale-for-triage (weeding output). Sets `spec.stale_flagged_at` on Specs. Never auto-closes. |
+| `flag_stale`       | Flag dispatched Specs stale-for-triage (weeding output). Sets `spec.stale_flagged_at`. Never auto-closes. |
 | `record_outcome`   | Append a hit or miss to a role's calibration record (hit: Critical confirmed or Strength validated; miss: stability contradiction or missed Critical). |
 | `get_calibration`  | Read a role's current smoothed score and `distrusted` flag. The orchestrator consults this before scheduling reviews. |
 | `adjust_trust`     | On threshold-crossing: set or clear `distrusted`, stamp `last_adjusted_at`. A `distrusted` role requires a second reviewer and its Criticals do not merge-block alone. Satisfies the Phase 2 exit gate when it fires. |

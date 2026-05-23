@@ -127,8 +127,10 @@ transcript.
 
 Each tick runs these steps in order:
 
-1. **Weed** - surface Specs/nodes untouched > 14 days (configurable) via `flag_stale`.
-   Never auto-closes; every stale node is surfaced for user triage.
+1. **Weed** - flag dispatched Specs untouched > 14 days (configurable) via `flag_stale`.
+   Never auto-closes; every stale Spec is surfaced for user triage. (Node-level
+   weeding across all entity types exists as `weeding.find_stale_nodes` but is not
+   yet wired into the tick - deferred.)
 2. **Compute the ready set** - Tasks whose `depends-on` deps are all resolved and
    whose parent Spec is dispatched.
 3. **Overlap filter (serial-when-shared)** - `detect_overlap` partitions the ready
@@ -187,7 +189,7 @@ idempotent (re-running is a no-op).
 | `claim_scope` | Record a Task's claimed paths; returns a conflict result if they overlap an open held Claim. Returns a `claim_id` UUID (not the task id) for use with `release_claim`. |
 | `release_claim` | Release a Claim on task completion/merge. Takes the `claim_id` UUID from `claim_scope`. |
 | `detect_overlap` | Given a ready-task candidate list (`{task_id, scope_paths}` dicts), return the maximum non-overlapping batch (the scheduler's core serial-when-shared query). |
-| `flag_stale` | Mark Specs/nodes stale-for-triage (weeding output). Sets `spec.stale_flagged_at`. |
+| `flag_stale` | Flag dispatched Specs stale-for-triage (weeding output). Sets `spec.stale_flagged_at`. |
 | `record_outcome` | Append a hit or miss to a role's calibration record. |
 | `get_calibration` | Read a role's current score and `distrusted` flag (orchestrator consults before scheduling reviews). |
 | `adjust_trust` | On threshold-crossing: set or clear `distrusted`, stamp `last_adjusted_at`. Satisfies the exit gate when it fires. |
