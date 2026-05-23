@@ -29,7 +29,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import calibration, claims, db, headless, nodes, relations, scheduler, weeding
+from . import (
+    calibration, claims, db, findings, headless, loops, nodes, relations,
+    scheduler, weeding,
+)
 
 
 # --- scope parsing ---------------------------------------------------------
@@ -123,6 +126,55 @@ def _real_review(conn, task_id: str, job_result: dict) -> dict:
             "calibrate": False}
 
 
+# --- retry cap (CriticalLoop-backed) ---------------------------------------
+def _find_open_dispatch_loop(conn, task_id: str) -> dict | None:
+    """The open CriticalLoop tracking this task's dispatch failures, or None.
+
+    Linkage survives stateless ticks: a 'dispatch-failure' Finding has
+    parent_id == task_id, and the loop's finding_id points back to it.
+    """
+    row = conn.execute(
+        "SELECT cl.id FROM critical_loop cl "
+        "JOIN finding f ON f.id = cl.finding_id "
+        "WHERE f.parent_id = ? AND f.subtype = 'dispatch-failure' "
+        "AND cl.status = 'open' "
+        "ORDER BY cl.started_at LIMIT 1",
+        (task_id,),
+    ).fetchone()
+    return nodes.get_node(conn, row[0]) if row else None
+
+
+def _handle_failure(conn, task_id: str, claim_id: str, reason: str,
+                    result: dict) -> None:
+    """Record a dispatch failure; escalate on the 3rd strike, else reset to pending.
+
+    Strike count lives in the CriticalLoop's iteration_count (schema default 1).
+    First failure CREATES the loop (count = 1, no advance); each later failure
+    advances it (1->2, 2->3). When advance pushes count to DIAGNOSTIC_THRESHOLD
+    (3) the loop stamps diagnostic_fired_at and the task escalates instead of
+    re-dispatching. Either way the claim is released so the scope is freed.
+    """
+    loop = _find_open_dispatch_loop(conn, task_id)
+    if loop is None:
+        fid = findings.log_finding(
+            conn, parent_id=task_id, severity="Important",
+            subtype="dispatch-failure", body=reason,
+        )
+        loop = nodes.get_node(conn, loops.start_critical_loop(conn, fid))
+    else:
+        loop = loops.advance_critical_loop(conn, loop["id"])
+
+    claims.release_claim(conn, claim_id)
+    if loop["diagnostic_fired_at"]:
+        nodes.update_node(conn, task_id, status="escalated")
+        result["escalations"].append({
+            "task_id": task_id, "reason": reason,
+            "iterations": loop["iteration_count"],
+        })
+    else:
+        nodes.update_node(conn, task_id, status="pending")
+
+
 # --- the tick --------------------------------------------------------------
 def tick(
     conn,
@@ -185,11 +237,8 @@ def tick(
             wt, branch = worktree_factory(repo, tid)
             claims.attach_worktree(conn, cid, wt, branch)
             nodes.update_node(conn, tid, status="in_progress")
-        except Exception:  # noqa: BLE001 - setup failure must never propagate
-            try:
-                claims.release_claim(conn, cid)
-            except claims.ClaimConflict:
-                pass  # already released somehow; nothing to undo
+        except Exception as e:  # noqa: BLE001 - setup failure must never propagate
+            _handle_failure(conn, tid, cid, f"worktree/setup failure: {e}", result)
             result["failed"].append(tid)
             continue
         claim_ids[tid] = cid
@@ -216,12 +265,8 @@ def tick(
         if rv["verdict"] == "CLEAN":
             clean_ids.append(tid)
         else:
-            # NEEDS_FIXING: reset to 'pending' and release the claim so the task
-            # re-enters the ready set next tick (ready_tasks only sees
-            # pending/ready, and a re-claim needs the scope free). Leaving it
-            # in_progress with a held claim would strand it forever.
-            nodes.update_node(conn, tid, status="pending")
-            claims.release_claim(conn, claim_ids[tid])
+            _handle_failure(conn, tid, claim_ids[tid],
+                            "NEEDS_FIXING review verdict", result)
 
     # 7. Merge CLEAN tasks in dependency (topological) order.
     # NOTE: within a SINGLE tick this edge set is always empty - ready_tasks
@@ -244,6 +289,11 @@ def tick(
             continue  # leave claim held for retry / human intervention
         nodes.update_node(conn, tid, status="merged")
         claims.release_claim(conn, claim_ids[tid])
+        # A flaky task that previously failed carries an open dispatch loop;
+        # resolve it on success so it does not linger or count toward weeding.
+        recovered = _find_open_dispatch_loop(conn, tid)
+        if recovered is not None:
+            loops.resolve_critical_loop(conn, recovered["id"])
         result["merged"].append(tid)
 
     # 8. Failed launches: same recovery as NEEDS_FIXING - reset to 'pending' and
@@ -255,8 +305,8 @@ def tick(
     for r in results:
         if not r.get("ok"):
             tid = r["task_id"]
-            nodes.update_node(conn, tid, status="pending")
-            claims.release_claim(conn, claim_ids[tid])
+            _handle_failure(conn, tid, claim_ids[tid],
+                            r.get("error", "launch failed"), result)
             result["failed"].append(tid)
 
     # 9. Return the tick summary.

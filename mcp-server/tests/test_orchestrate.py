@@ -347,3 +347,97 @@ def test_fresh_node_not_surfaced(tmp_db_path):
         assert nid not in result["stale_nodes"]
     finally:
         conn.close()
+
+
+def test_retry_cap_escalates_on_third_failure(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+
+        def fail(job):
+            return {"task_id": job["task_id"], "ok": False, "error": "boom"}
+
+        for _ in range(2):  # strikes 1 and 2 -> pending
+            orchestrate.tick(conn, launch_fn=fail, worktree_factory=fake_worktree,
+                             merge_fn=fake_merge_ok, review_fn=fake_review_clean)
+            assert nodes.get_node(conn, t1)["status"] == "pending"
+
+        r3 = orchestrate.tick(conn, launch_fn=fail, worktree_factory=fake_worktree,
+                              merge_fn=fake_merge_ok, review_fn=fake_review_clean)
+        assert nodes.get_node(conn, t1)["status"] == "escalated"
+        assert t1 in {e["task_id"] for e in r3["escalations"]}
+        loop = orchestrate._find_open_dispatch_loop(conn, t1)
+        assert loop["iteration_count"] == 3
+        assert loop["diagnostic_fired_at"] is not None
+    finally:
+        conn.close()
+
+
+def test_escalated_task_not_redispatched(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+
+        def fail(job):
+            return {"task_id": job["task_id"], "ok": False, "error": "boom"}
+
+        for _ in range(3):
+            orchestrate.tick(conn, launch_fn=fail, worktree_factory=fake_worktree,
+                             merge_fn=fake_merge_ok, review_fn=fake_review_clean)
+        assert nodes.get_node(conn, t1)["status"] == "escalated"
+        r = orchestrate.tick(conn, launch_fn=fake_launch_ok,
+                             worktree_factory=fake_worktree,
+                             merge_fn=fake_merge_ok, review_fn=fake_review_clean)
+        assert t1 not in r["dispatched"]
+    finally:
+        conn.close()
+
+
+def test_repeated_needs_fixing_escalates_on_third(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+
+        def needs_fixing(conn_, tid, r):
+            return {"verdict": "NEEDS_FIXING", "reviewer": "code-reviewer",
+                    "hit": False}
+
+        for _ in range(2):
+            orchestrate.tick(conn, launch_fn=fake_launch_ok,
+                             worktree_factory=fake_worktree,
+                             merge_fn=fake_merge_ok, review_fn=needs_fixing)
+            assert nodes.get_node(conn, t1)["status"] == "pending"
+        orchestrate.tick(conn, launch_fn=fake_launch_ok,
+                         worktree_factory=fake_worktree,
+                         merge_fn=fake_merge_ok, review_fn=needs_fixing)
+        assert nodes.get_node(conn, t1)["status"] == "escalated"
+    finally:
+        conn.close()
+
+
+def test_failure_then_success_resolves_loop(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        calls = {"n": 0}
+
+        def flaky(job):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {"task_id": job["task_id"], "ok": False, "error": "boom"}
+            return {"task_id": job["task_id"], "ok": True, "sha": "deadbeef"}
+
+        orchestrate.tick(conn, launch_fn=flaky, worktree_factory=fake_worktree,
+                         merge_fn=fake_merge_ok, review_fn=fake_review_clean)
+        assert orchestrate._find_open_dispatch_loop(conn, t1) is not None
+
+        r2 = orchestrate.tick(conn, launch_fn=flaky, worktree_factory=fake_worktree,
+                              merge_fn=fake_merge_ok, review_fn=fake_review_clean)
+        assert t1 in r2["merged"]
+        assert orchestrate._find_open_dispatch_loop(conn, t1) is None
+    finally:
+        conn.close()
