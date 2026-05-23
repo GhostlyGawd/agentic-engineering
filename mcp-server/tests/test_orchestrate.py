@@ -1,11 +1,15 @@
 """Orchestrator tick integration tests.
 
-Every external seam is stubbed - NO real claude, NO real git. The graph is
+Most tests stub every external seam - NO real claude, NO real git. The graph is
 built with nodes.create_node + relations.link_nodes; the tick is driven through
 the injected seam closures so the test asserts on the composition wiring, not on
-the behavior of the already-tested components.
+the behavior of the already-tested components. One test exercises the real
+_real_worktree seam against a temp `git init` repo (git is available; only
+`claude` is not), so it does NOT carry the llm marker.
 """
 import json
+import shutil
+import subprocess
 
 import pytest
 
@@ -116,8 +120,8 @@ def test_overlapping_tasks_only_one_dispatched(tmp_db_path):
         conn.close()
 
 
-# --- 4. launch failure -> failed, still in_progress, claim held ------------
-def test_launch_failure_keeps_task_in_progress_and_claim_held(tmp_db_path):
+# --- 4. launch failure -> failed, reset to pending, claim released ---------
+def test_launch_failure_resets_to_pending_and_releases_claim(tmp_db_path):
     conn = _mk_conn(tmp_db_path)
     try:
         spec = _dispatched_spec(conn)
@@ -132,8 +136,9 @@ def test_launch_failure_keeps_task_in_progress_and_claim_held(tmp_db_path):
         )
         assert t1 in result["failed"]
         assert t1 not in result["merged"]
-        assert nodes.get_node(conn, t1)["status"] == "in_progress"
-        assert _claim_status(conn, t1) == ["held"]
+        # Recovered like NEEDS_FIXING: re-enterable next tick, scope freed.
+        assert nodes.get_node(conn, t1)["status"] == "pending"
+        assert _claim_status(conn, t1) == ["released"]
     finally:
         conn.close()
 
@@ -258,3 +263,53 @@ def test_cli_main_prints_json(tmp_db_path, monkeypatch, capsys):
     assert payload["dispatched"] == []
     assert payload["weeded"] == []
     assert rc in (0, None)
+
+
+# --- worktree setup failure must not crash the tick -----------------------
+def test_tick_does_not_raise_when_worktree_factory_fails(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+
+        def boom_worktree(repo, tid):
+            raise RuntimeError("git worktree add exploded")
+
+        # Must NOT raise.
+        result = orchestrate.tick(
+            conn, launch_fn=fake_launch_ok, worktree_factory=boom_worktree,
+            merge_fn=fake_merge_ok, review_fn=fake_review_clean,
+        )
+        assert t1 in result["failed"]
+        assert t1 not in result["dispatched"]
+        assert t1 not in result["merged"]
+        # Claim was released (or never left held) so the scope is not stranded.
+        assert _claim_status(conn, t1) in (["released"], [])
+    finally:
+        conn.close()
+
+
+# --- real-git: _real_worktree is idempotent across re-dispatch ------------
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
+def test_real_worktree_idempotent_on_redispatch(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(repo), *args],
+                       check=True, capture_output=True, text=True)
+
+    git("init")
+    git("config", "user.email", "t@t.test")
+    git("config", "user.name", "t")
+    (repo / "README.md").write_text("hi\n", encoding="utf-8")
+    git("add", "README.md")
+    git("commit", "-m", "init")
+
+    # First dispatch creates the worktree + branch.
+    path1, branch1 = orchestrate._real_worktree(str(repo), "t1")
+    # Second dispatch (re-enter after NEEDS_FIXING / failure) must NOT raise -
+    # the helper cleans the prior attempt and recreates.
+    path2, branch2 = orchestrate._real_worktree(str(repo), "t1")
+    assert path1 == path2
+    assert branch1 == branch2 == "orch/t1"

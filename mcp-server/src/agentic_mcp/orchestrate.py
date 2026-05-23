@@ -14,6 +14,12 @@ graph DB passed in; nothing is cached between ticks.
 Contract guarantee: tick() MUST NOT raise for normal worker/review/merge
 failures - those become entries in result["failed"]/result["escalations"]. Only
 genuine programming errors propagate.
+
+Integration-branch assumption: _real_merge merges each worktree branch into the
+repo's CURRENTLY-CHECKED-OUT branch, assumed to be the integration branch
+(HEAD == integration branch). The deployment is responsible for checking out
+that branch before running ticks; the orchestrator documents but does not
+enforce this.
 """
 from __future__ import annotations
 
@@ -75,14 +81,30 @@ def _real_launch(job: dict) -> dict:
         return {"task_id": tid, "ok": False, "error": str(e)}
 
 
+def _git_quiet(args: list[str]) -> None:
+    """Best-effort git call - swallow failure (e.g. 'doesn't exist' on cleanup)."""
+    subprocess.run(["git", *args], check=False, capture_output=True, text=True)
+
+
 def _real_worktree(repo: str, task_id: str) -> tuple[str, str]:
     branch = "orch/" + task_id
     path = str(Path(repo) / ".worktrees" / task_id)
+    # Idempotent: a re-dispatched task (NEEDS_FIXING / launch-failure reset to
+    # pending) hits the same path+branch, and `git worktree add` fails if either
+    # already exists. Best-effort remove any prior attempt first so re-dispatch
+    # never crashes the tick; the cleanup calls are quiet (a "doesn't exist"
+    # error on the first dispatch is expected and ignored).
+    _git_quiet(["-C", repo, "worktree", "remove", "--force", path])
+    _git_quiet(["-C", repo, "branch", "-D", branch])
     _git(["-C", repo, "worktree", "add", path, "-b", branch])
     return (path, branch)
 
 
 def _real_merge(repo: str, branch: str) -> None:
+    # Merges *branch* into the repo's CURRENTLY-CHECKED-OUT branch, which is
+    # ASSUMED to be the integration branch (HEAD == integration branch). This
+    # assumption is documented, not enforced - the orchestrator's deployment is
+    # responsible for checking out the integration branch before running ticks.
     # check=True -> CalledProcessError on conflict, which tick() routes to
     # escalations (claim stays held so the next tick can retry / a human can act).
     _git(["-C", repo, "merge", "--no-ff", branch])
@@ -152,9 +174,21 @@ def tick(
         except claims.ClaimConflict:
             # An overlapping claim is already held; skip - do not dispatch.
             continue
-        wt, branch = worktree_factory(repo, tid)
-        claims.attach_worktree(conn, cid, wt, branch)
-        nodes.update_node(conn, tid, status="in_progress")
+        # Worktree creation + setup can fail (e.g. a re-dispatched task whose
+        # worktree git refuses to recreate). ANY such failure must not crash the
+        # tick: route the task to `failed`, release the claim we just took, and
+        # move on. ClaimConflict is handled above; everything else lands here.
+        try:
+            wt, branch = worktree_factory(repo, tid)
+            claims.attach_worktree(conn, cid, wt, branch)
+            nodes.update_node(conn, tid, status="in_progress")
+        except Exception:  # noqa: BLE001 - setup failure must never propagate
+            try:
+                claims.release_claim(conn, cid)
+            except claims.ClaimConflict:
+                pass  # already released somehow; nothing to undo
+            result["failed"].append(tid)
+            continue
         claim_ids[tid] = cid
         branches[tid] = branch
         jobs.append({"task_id": tid, "worktree": wt, "branch": branch})
@@ -187,6 +221,12 @@ def tick(
             claims.release_claim(conn, claim_ids[tid])
 
     # 7. Merge CLEAN tasks in dependency (topological) order.
+    # NOTE: within a SINGLE tick this edge set is always empty - ready_tasks
+    # gates a dependent task until its prerequisite resolves, so two tasks with
+    # a depends-on edge between them never land in the same CLEAN batch. Ordering
+    # correctness therefore lives in CROSS-TICK sequencing (the prerequisite
+    # merges first, which makes the dependent ready next tick). merge_order is
+    # kept here for robustness/correctness if that invariant ever changes.
     edges = [
         (tid, dep)
         for tid in clean_ids
@@ -203,10 +243,18 @@ def tick(
         claims.release_claim(conn, claim_ids[tid])
         result["merged"].append(tid)
 
-    # 8. Failed launches: task stays in_progress, claim stays held.
+    # 8. Failed launches: same recovery as NEEDS_FIXING - reset to 'pending' and
+    # release the claim so the task re-enters the ready set next tick (otherwise
+    # it stays in_progress with a held claim, stranding its scope forever). Still
+    # recorded in `failed` for visibility. Like NEEDS_FIXING this has no retry cap
+    # yet (disclosed limitation) - a persistently failing task re-dispatches each
+    # tick.
     for r in results:
         if not r.get("ok"):
-            result["failed"].append(r["task_id"])
+            tid = r["task_id"]
+            nodes.update_node(conn, tid, status="pending")
+            claims.release_claim(conn, claim_ids[tid])
+            result["failed"].append(tid)
 
     # 9. Return the tick summary.
     return result
