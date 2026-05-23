@@ -130,6 +130,9 @@ class Pool:
     run_claude_headless call in production, or a stub in tests). Threads are the
     right primitive here because the work is a blocked subprocess wait, not CPU.
     Results are returned in completion order; each is whatever launch_fn returns.
+    If launch_fn raises, the exception propagates from run() and remaining results
+    are discarded; callers that want per-job error handling should make launch_fn
+    catch and return a structured error result instead of raising.
     """
 
     def __init__(self, max_workers: int = 3):

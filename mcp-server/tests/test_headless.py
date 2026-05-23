@@ -12,14 +12,18 @@ def test_harness_importable_from_package():
 
 
 def test_pool_runs_all_jobs_with_cap():
+    import threading
     jobs = [{"task_id": f"t{i}"} for i in range(5)]
+    lock = threading.Lock()
     concurrent = {"now": 0, "max": 0}
 
     def launch(job):
-        concurrent["now"] += 1
-        concurrent["max"] = max(concurrent["max"], concurrent["now"])
+        with lock:
+            concurrent["now"] += 1
+            concurrent["max"] = max(concurrent["max"], concurrent["now"])
         time.sleep(0.05)
-        concurrent["now"] -= 1
+        with lock:
+            concurrent["now"] -= 1
         return {"task_id": job["task_id"], "ok": True}
 
     pool = headless.Pool(max_workers=2)
