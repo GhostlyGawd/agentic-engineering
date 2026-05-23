@@ -12,7 +12,8 @@ import sqlite3
 
 PHASE_1_VERSION = 1
 PHASE_2_VERSION = 2
-SCHEMA_VERSION = PHASE_2_VERSION
+PHASE_3_VERSION = 3   # schema version, not project phase: integration-layer change took v2
+SCHEMA_VERSION = PHASE_3_VERSION
 
 # SQLite cannot ALTER a CHECK constraint, so widening the retro.failed_layer
 # domain (adding 'integration') requires the documented 12-step table rebuild:
@@ -64,6 +65,28 @@ CREATE TABLE IF NOT EXISTS critical_loop (
 );
 """
 
+_PHASE_3_DDL = """
+CREATE TABLE IF NOT EXISTS claim (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  scope_paths TEXT NOT NULL,
+  worktree TEXT,
+  branch TEXT,
+  status TEXT NOT NULL CHECK(status IN ('held','released')),
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS calibration (
+  role TEXT PRIMARY KEY,
+  observations INTEGER NOT NULL DEFAULT 0,
+  hits INTEGER NOT NULL DEFAULT 0,
+  misses INTEGER NOT NULL DEFAULT 0,
+  score REAL NOT NULL DEFAULT 0.5,
+  last_adjusted_at TEXT,
+  distrusted INTEGER NOT NULL DEFAULT 0
+);
+"""
+
 
 def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
@@ -101,6 +124,13 @@ def _migrate_to_phase_2(conn: sqlite3.Connection) -> None:
     conn.executescript(_RETRO_REBUILD_DDL)
 
 
+def _migrate_to_v3(conn: sqlite3.Connection) -> None:
+    # claim + calibration are additive tables; stale_flagged_at is an additive
+    # column. All guarded/idempotent, so no table rebuild is needed here.
+    conn.executescript(_PHASE_3_DDL)
+    _add_column_if_missing(conn, "spec", "stale_flagged_at", "TEXT")
+
+
 def apply_migrations(conn: sqlite3.Connection) -> None:
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version >= SCHEMA_VERSION:
@@ -114,5 +144,7 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
         _migrate_to_phase_1(conn)
     if version < PHASE_2_VERSION:
         _migrate_to_phase_2(conn)
+    if version < PHASE_3_VERSION:
+        _migrate_to_v3(conn)
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()

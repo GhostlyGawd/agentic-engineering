@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS spec (
   scope TEXT,
   criteria_json TEXT NOT NULL,  -- JSON array of {text, verify, satisfied:bool, evidence:str}
   feedback_loop TEXT NOT NULL,
-  required_reads TEXT           -- JSON array of node ids
+  required_reads TEXT,          -- JSON array of node ids
+  stale_flagged_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS decision (
@@ -205,6 +206,26 @@ CREATE TABLE IF NOT EXISTS arch_debt (
   summary TEXT,
   tags TEXT,
   scope TEXT
+);
+
+CREATE TABLE IF NOT EXISTS claim (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  scope_paths TEXT NOT NULL,            -- JSON array of repo-relative path globs
+  worktree TEXT,
+  branch TEXT,
+  status TEXT NOT NULL CHECK(status IN ('held','released')),
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS calibration (
+  role TEXT PRIMARY KEY,
+  observations INTEGER NOT NULL DEFAULT 0,
+  hits INTEGER NOT NULL DEFAULT 0,
+  misses INTEGER NOT NULL DEFAULT 0,
+  score REAL NOT NULL DEFAULT 0.5,
+  last_adjusted_at TEXT,
+  distrusted INTEGER NOT NULL DEFAULT 0  -- 0|1 boolean
 );
 
 CREATE TABLE IF NOT EXISTS relations (
