@@ -91,3 +91,30 @@ def test_new_spec_command_doc():
     assert "argument-hint" in low
     assert "spec-writer" in low
     assert "retry" in low or "escalat" in low or "reasons" in low
+
+
+def test_orchestrator_doc_declares_single_tick():
+    from pathlib import Path
+    text = Path(__file__).parents[2].joinpath("agents", "orchestrator.md").read_text(encoding="utf-8")
+    assert "model: sonnet" in text
+    assert "--once" in text
+    assert "implements nothing" in text.lower()
+
+
+def test_orchestrate_command_doc():
+    t = _doc("commands/orchestrate.md")
+    low = t.lower()
+    # Single-tick contract
+    assert "--once" in t
+    assert "--pool" in t
+    assert "--weed-days" in t
+    # Key mechanisms
+    assert "flag_stale" in t
+    assert "detect_overlap" in t or "detect overlap" in low
+    assert "claim_scope" in t or "claim scope" in low
+    assert "record_outcome" in t
+    assert "adjust_trust" in t
+    assert "merge_order" in t or "dag order" in low
+    # Policy
+    assert "pool" in low and "3" in t
+    assert "14" in t
