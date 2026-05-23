@@ -42,16 +42,12 @@ def test_released_claim_does_not_conflict(tmp_db_path):
         conn.close()
 
 
-def test_detect_overlap_returns_max_disjoint_batch(tmp_db_path):
-    conn = _mk_conn(tmp_db_path)
-    try:
-        candidates = [
-            {"task_id": "t1", "scope_paths": ["src/a/*"]},
-            {"task_id": "t2", "scope_paths": ["src/a/x.py"]},  # overlaps t1 -> dropped
-            {"task_id": "t3", "scope_paths": ["src/b/*"]},
-            {"task_id": "t4", "scope_paths": ["src/c/*"]},
-        ]
-        batch = claims.detect_overlap(candidates)
-        assert [c["task_id"] for c in batch] == ["t1", "t3", "t4"]
-    finally:
-        conn.close()
+def test_detect_overlap_returns_max_disjoint_batch():
+    candidates = [
+        {"task_id": "t1", "scope_paths": ["src/a/*"]},
+        {"task_id": "t2", "scope_paths": ["src/a/x.py"]},  # overlaps t1 -> dropped
+        {"task_id": "t3", "scope_paths": ["src/b/*"]},
+        {"task_id": "t4", "scope_paths": ["src/c/*"]},
+    ]
+    batch = claims.detect_overlap(candidates)
+    assert [c["task_id"] for c in batch] == ["t1", "t3", "t4"]

@@ -26,7 +26,14 @@ def _now() -> str:
 
 
 def _paths_overlap(a: list[str], b: list[str]) -> bool:
-    """True if any path/glob in *a* matches any in *b* (either direction)."""
+    """True if any path/glob in *a* matches any in *b* (either direction).
+
+    Detection is reliable when at least one side of a pair is a concrete path
+    (the common case: a held glob vs a new concrete path). Two globs that are
+    not fnmatch-related may NOT be detected even if they can match the same
+    file - acceptable while scope_paths are concrete paths or simple dir/*
+    globs. Revisit with glob-intersection logic if richer patterns are needed.
+    """
     for pa in a:
         for pb in b:
             if pa == pb or fnmatch.fnmatch(pa, pb) or fnmatch.fnmatch(pb, pa):
