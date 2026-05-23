@@ -112,6 +112,12 @@ def _real_merge(repo: str, branch: str) -> None:
     _git(["-C", repo, "merge", "--no-ff", branch])
 
 
+def _real_current_branch(repo: str) -> str:
+    # The branch HEAD points at. Compared to integration_branch when that guard
+    # is enabled; injectable so fast tests need no real git.
+    return _git(["-C", repo, "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
+
+
 def _real_review(conn, task_id: str, job_result: dict) -> dict:
     """Minimal integration-default reviewer.
 
@@ -186,6 +192,8 @@ def tick(
     worktree_factory=_real_worktree,
     merge_fn=_real_merge,
     review_fn=_real_review,
+    integration_branch: str | None = None,
+    current_branch_fn=_real_current_branch,
 ) -> dict:
     result = {
         "weeded": [],
@@ -275,6 +283,21 @@ def tick(
     # correctness therefore lives in CROSS-TICK sequencing (the prerequisite
     # merges first, which makes the dependent ready next tick). merge_order is
     # kept here for robustness/correctness if that invariant ever changes.
+    # Integration-branch guard (opt-in). If HEAD is not the integration branch,
+    # refuse to merge anything into the wrong branch: escalate every CLEAN task
+    # (claims stay held for a later correctly-branched tick) and skip merging.
+    # tick() still completes - weeding/dispatch/review already ran.
+    if integration_branch is not None and clean_ids:
+        actual = current_branch_fn(repo)
+        if actual != integration_branch:
+            for tid in clean_ids:
+                result["escalations"].append({
+                    "task_id": tid,
+                    "error": (f"HEAD on {actual}, expected integration branch "
+                              f"{integration_branch}"),
+                })
+            clean_ids = []  # skip all merges; claims remain held
+
     edges = [
         (tid, dep)
         for tid in clean_ids
@@ -327,12 +350,15 @@ def main() -> int:
     parser.add_argument("--weed-days", type=int, default=14,
                         help="stale-spec threshold in days")
     parser.add_argument("--repo", default=".", help="repo root for git seams")
+    parser.add_argument("--integration-branch", default=None,
+                        help="if set, refuse to merge unless HEAD == this branch")
     args = parser.parse_args()
 
     conn = db.connect(db.resolve_db_path())
     try:
         result = tick(
-            conn, repo=args.repo, pool_size=args.pool, weed_days=args.weed_days
+            conn, repo=args.repo, pool_size=args.pool, weed_days=args.weed_days,
+            integration_branch=args.integration_branch,
         )
     finally:
         conn.close()

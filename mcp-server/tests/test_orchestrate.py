@@ -444,3 +444,53 @@ def test_failure_then_success_resolves_loop(tmp_db_path):
         assert orchestrate._find_open_dispatch_loop(conn, t1) is None
     finally:
         conn.close()
+
+
+def test_integration_branch_match_merges(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        result = orchestrate.tick(
+            conn, launch_fn=fake_launch_ok, worktree_factory=fake_worktree,
+            merge_fn=fake_merge_ok, review_fn=fake_review_clean,
+            integration_branch="main", current_branch_fn=lambda repo: "main",
+        )
+        assert t1 in result["merged"]
+    finally:
+        conn.close()
+
+
+def test_integration_branch_mismatch_skips_and_escalates(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        merged_calls = []
+        result = orchestrate.tick(
+            conn, launch_fn=fake_launch_ok, worktree_factory=fake_worktree,
+            merge_fn=lambda r, b: merged_calls.append(b),
+            review_fn=fake_review_clean,
+            integration_branch="main",
+            current_branch_fn=lambda repo: "feature-x",
+        )
+        assert result["merged"] == []
+        assert merged_calls == []  # merge_fn never called
+        assert t1 in {e["task_id"] for e in result["escalations"]}
+        assert _claim_status(conn, t1) == ["held"]  # held for a later correct tick
+    finally:
+        conn.close()
+
+
+def test_integration_branch_none_is_default_behavior(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        result = orchestrate.tick(  # no integration_branch -> merges regardless
+            conn, launch_fn=fake_launch_ok, worktree_factory=fake_worktree,
+            merge_fn=fake_merge_ok, review_fn=fake_review_clean,
+        )
+        assert t1 in result["merged"]
+    finally:
+        conn.close()
