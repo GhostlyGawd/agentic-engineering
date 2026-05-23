@@ -71,8 +71,10 @@ def claim_scope(
 
 
 def release_claim(conn: sqlite3.Connection, claim_id: str) -> None:
-    conn.execute("UPDATE claim SET status='released' WHERE id=?", (claim_id,))
+    cur = conn.execute("UPDATE claim SET status='released' WHERE id=? AND status='held'", (claim_id,))
     conn.commit()
+    if cur.rowcount == 0:
+        raise ClaimConflict(f"no held claim to release: {claim_id}")
 
 
 def detect_overlap(candidates: list[dict]) -> list[dict]:

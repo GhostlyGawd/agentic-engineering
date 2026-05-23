@@ -32,6 +32,12 @@ def test_calibration_roundtrip(tmp_path, monkeypatch):
     assert json.loads(out[0].text)["observations"] == 1
 
 
+def test_release_claim_unknown_id_errors(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTIC_DB_PATH", str(tmp_path / "graph.db"))
+    out = asyncio.run(server.call_tool("release_claim", {"claim_id": "does-not-exist"}))
+    assert "error" in json.loads(out[0].text)
+
+
 @pytest.mark.asyncio
 async def test_create_and_get_node_via_stdio(tmp_path):
     db_path = tmp_path / "graph.db"
