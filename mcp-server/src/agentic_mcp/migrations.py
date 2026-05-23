@@ -1,9 +1,11 @@
 # mcp-server/src/agentic_mcp/migrations.py
-"""Phase 1 schema migrations. Idempotent + additive. user_version gated.
+"""Schema migrations (v1-v3). Idempotent + additive. user_version gated.
 
 Phase 0 left schema in schema.sql (all CREATE TABLE IF NOT EXISTS) with
-user_version 0. Phase 1 layers additive columns + the critical_loop table on
-top. Safe to call on every connect(): returns immediately when already at the
+user_version 0. Later versions layer additive columns + tables on top: v1 adds
+the critical_loop table and finding/spec columns, v2 widens retro.failed_layer,
+v3 adds the claim + calibration auxiliary tables and spec.stale_flagged_at.
+Safe to call on every connect(): returns immediately when already at the
 target version.
 """
 from __future__ import annotations
@@ -124,6 +126,9 @@ def _migrate_to_phase_2(conn: sqlite3.Connection) -> None:
     conn.executescript(_RETRO_REBUILD_DDL)
 
 
+# Named by schema version, not project phase, going forward (phase/version
+# diverged when the integration-layer change took v2). Future migrations follow
+# _migrate_to_vN.
 def _migrate_to_v3(conn: sqlite3.Connection) -> None:
     # claim + calibration are additive tables; stale_flagged_at is an additive
     # column. All guarded/idempotent, so no table rebuild is needed here.

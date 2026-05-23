@@ -52,7 +52,7 @@ def test_upgrades_phase0_db(tmp_db_path):
         conn.close()
 
 
-def test_fresh_db_is_v3_with_phase2_tables(tmp_db_path):
+def test_fresh_db_is_v3_with_auxiliary_tables(tmp_db_path):
     from agentic_mcp import db
     db.init_db(tmp_db_path)
     conn = db.connect(tmp_db_path)
@@ -83,6 +83,8 @@ def test_v2_db_upgrades_to_v3(tmp_db_path):
         names = {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         assert {"claim", "calibration"} <= names
+        spec_cols = {r[1] for r in conn.execute("PRAGMA table_info(spec)")}
+        assert "stale_flagged_at" in spec_cols
         migrations.apply_migrations(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
     finally:
