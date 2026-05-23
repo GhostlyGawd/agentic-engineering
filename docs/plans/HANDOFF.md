@@ -1,86 +1,53 @@
-# Handoff: Execute Phase 0 of the Agentic Engineering System
+# Handoff - Agentic Engineering System, Phase 2 complete
 
-Paste this entire message into a fresh Claude Code session opened with `cwd = D:\GitHub Projects\Studies\Superpowers Study`.
-
----
-
-You are picking up execution of a fully-written, locked implementation plan. **Do not redo the planning.** Do not re-write the spec. Do not interview me about scope. Read the three files below, then start executing tasks in order.
+> Paste-ready context for a fresh Claude Code session opened with `cwd = D:\GitHub Projects\Studies\Superpowers Study`. (Supersedes the prior Phase 0 handoff.)
 
 ## What this project is
 
-A self-improving engineering system, packaged as a Claude Code plugin. Five phases. We are building **Phase 0** — the foundations. The repo you are sitting in is being repurposed as the plugin's own repo (we are dogfooding it from day one). The plugin will be pushed to `https://github.com/GhostlyGawd/agentic-engineering` in the final task.
+A self-improving engineering system packaged as a Claude Code plugin, dogfooded into its own repo. Upstream: `github.com/GhostlyGawd/agentic-engineering`. A typed SQLite knowledge graph (`./.agentic/graph.db`) backs everything; durable writes go through the bundled stdio MCP server (`agentic-graph`).
 
-## Three files that contain everything you need
+## Current state (as of 2026-05-23)
 
-1. **PRD (full system design):** `agentic-engineering-system-prd-v3.md` at repo root. Read this first if you want the why.
-2. **The plan (what to build, in order):** `docs/plans/2026-05-17-phase-0-foundations.md`. 22 tasks, numbered 0–21, with file paths, code blocks, verify commands, and acceptance criteria spelled out. No placeholders.
-3. **Task state for cross-session resume:** `docs/plans/2026-05-17-phase-0-foundations.md.tasks.json`. Mirrors the plan tasks with their `blockedBy` graph. The native task list (visible via `TaskList`) is already populated with all 22 tasks and dependencies — call `TaskList` first to confirm, then claim them in order.
+- **Branch:** `phase-2-retro-integration-layer`, base `main`. Pushed.
+- **PR #2 - "Phase 2: Orchestration & Parallelism"** - OPEN, 26 commits: https://github.com/GhostlyGawd/agentic-engineering/pull/2. User accepted it; check `gh pr view 2 --json state` to see whether it has been merged on GitHub yet.
+- Phases 0, 1, 1.5 are already merged to `main`. Phase 2 is this PR.
+- **Tests:** `147 passed, 7 deselected` (fast suite). **Live exit-gate e2e: 3/3 at HEAD.**
 
-## How to execute
+## What Phase 2 added
 
-Invoke this skill: **`superpowers-extended-cc:executing-plans`** with the plan path as the argument:
+- **Schema v3** (`migrations.py` / `schema.sql`): `claim` + `calibration` tables, `spec.stale_flagged_at`. Idempotent; fresh-init and v2->v3 upgrade both verified.
+- **Modules:** `claims.py` (scope claims + `detect_overlap`), `weeding.py` (`flag_stale_specs`; `find_stale_nodes` exists but is UNWIRED), `calibration.py` (trust-weighting), `scheduler.py` (`ready_tasks` + `merge_order`), `orchestrate.py` (the stateless `tick()` + `python -m agentic_mcp.orchestrate --once` CLI), `headless.py` (promoted from `tests/llm_harness.py` + `Pool`).
+- **7 new MCP tools** (25 total): `claim_scope, release_claim, detect_overlap, flag_stale, record_outcome, get_calibration, adjust_trust`.
+- **`agents/orchestrator.md`, `commands/orchestrate.md`, `tests/test_phase2_e2e.py`** (llm-marked exit gate).
+- **Design:** `docs/superpowers/specs/2026-05-23-phase-2-orchestration-design.md`. **Plan:** `docs/plans/2026-05-23-phase-2-orchestration.md` (+ `.tasks.json`, all 10 tasks completed).
 
-```
-/superpowers-extended-cc:executing-plans docs/plans/2026-05-17-phase-0-foundations.md
-```
+## Execution model (locked - do not relitigate)
 
-Alternatively, if you want me (the coordinator agent) to dispatch fresh subagents per task and review between them in this same session, invoke `superpowers-extended-cc:subagent-driven-development` instead.
+The graph IS the board. The orchestrator is STATELESS SINGLE-TICK (`/agentic:orchestrate --once`; `/loop` or cron owns the cadence) - each tick a fresh, graph-hydrated process, so nothing accumulates a transcript. Ephemeral headless `claude -p ... --permission-mode bypassPermissions` workers/reviewers, one per orthogonal claimed task, isolated in git worktrees. Serial-when-shared via scope claims; DAG-ordered merge; trust-weighting calibration gates scheduling.
 
-**Do not invoke `writing-plans`.** The plan is already written. The task is execution, not planning.
+## Open Phase 2.1 follow-ups (none blocking)
 
-## Locked decisions (do not re-ask these)
+1. **No retry cap** - `NEEDS_FIXING`/launch-failed tasks reset to `pending` + release their claim, so a persistently failing task re-dispatches every tick. Wire into the Phase-1 critical-loop 3-iteration diagnostic.
+2. **Node-level weeding unwired** - `weeding.find_stale_nodes` exists but the tick only weeds dispatched Specs via `flag_stale_specs`.
+3. **`_db_path` duplicated** in `server.py` and `orchestrate.py` (harmless - separate processes; extract to `db.py`).
+4. **Integration branch assumed** - the tick merges into whatever HEAD is checked out; document or enforce that it is the integration branch.
+5. **Python `tick()` `review_fn` is a CLEAN stub** - the full Phase-1 review panel is the orchestrator AGENT's job (driven via tool calls); the seam exists for injection (the e2e overrides it).
 
-Already answered, baked into the plan:
+## Repo conventions & gotchas
 
-| Decision                       | Value                                                                                         |
-|--------------------------------|-----------------------------------------------------------------------------------------------|
-| Plan scope                     | Phase 0 only. Phases 1–4 are out of scope and get their own plans later.                      |
-| MCP server language            | Python 3.12 (CPython from python.org).                                                        |
-| `sqlite-vec` / vec0 in Phase 0 | **Deferred to Phase 3.** Phase 0 is pure SQLite.                                              |
-| Cross-platform                 | **Windows-only for Phase 0.** Walkup test has `pytest.mark.skipif(sys.platform != 'win32')`.  |
-| MCP SDK version                | Flexible (`mcp>=0.9.0`) until Task 9 round-trip passes, then pin in `pyproject.toml`.         |
-| Bootstrap task (Task 19 e2e)   | A `slugify(s)` utility. Don't substitute something else.                                      |
-| PRD file                       | `agentic-engineering-system-prd-v3.md` is authoritative. (v2 has been deleted.)               |
-| GitHub handle                  | `GhostlyGawd`. Use for `plugin.json` author, repo URL, anywhere a handle is needed.           |
-| New GitHub repo name           | `agentic-engineering`. To be created in Task 21 at `github.com/GhostlyGawd/agentic-engineering`. |
-| License                        | MIT.                                                                                          |
-| Build mode                     | Per PRD Gating-4: Phase 0 is built **manually with Claude Code unaided**. Agents/subagents created here are deliverables, not used to build themselves. |
+- Windows + PowerShell 5.1. Venv python: `mcp-server/.venv/Scripts/python.exe`. RUN PYTEST FROM `mcp-server/`. Fast suite: `pytest -m "not llm"`. Live gate: `pytest -m llm` (needs the `claude` CLI on PATH).
+- Module style: `conn` first arg, `conn.commit()` after writes, `_now()` = `datetime.now(timezone.utc).isoformat(timespec="seconds")`.
+- Relations table is `relations`; valid types include `implements` (Task->Spec) and `depends-on` (Task->prereq) - there is NO `belongs-to`/`blocked-by`. Use `relations.neighbors(conn, id, type, direction)`.
+- Migration constants are named by SCHEMA VERSION (`_migrate_to_vN`, `SCHEMA_VERSION = 3`), not project phase (phase/version diverged when the integration-layer change took v2).
+- ASCII-only inside `.ps1` / command-doc string literals (PS 5.1 cp1252 decoding).
+- Avoid `2>&1` on native exes in PS 5.1; native-exe stderr arrives wrapped as `RemoteException` (cosmetic).
+- **Skill policy** (`CLAUDE.md`): only auto-invoke `superpowers-extended-cc` plugin skills in this repo. **Ignore `norns-loop-review/` entirely.**
 
-## Machine-specific quirks (read once, don't trip on these)
+## Likely next actions
 
-These are documented in the user's global `CLAUDE.md`; the plan itself respects them. You should too.
+- If PR #2 is merged: sync `main`, delete the `phase-2-retro-integration-layer` branch.
+- Or start the Phase 2.1 follow-up cycle, or Phase 3 (pattern-finder, periodic architectural review, `sqlite-vec`/vec0) per `agentic-engineering-system-prd-v3.md`.
 
-- **Shell:** PowerShell 5.1 on Windows 10. Native-exe stderr arrives wrapped as `RemoteException`; cosmetic, not an error.
-- **Never use `2>&1`** on native exes in PS5.1 — it corrupts `$?` and exit handling.
-- **`.ps1` string literals are ASCII-only inside `"..."`.** No em-dash, smart quotes, right-arrow. Use `-`, `->`, `'`, `"`. Comments and `@"..."@` here-strings are safe.
-- **Parse-check every `.ps1` before commit** via `[Management.Automation.Language.Parser]::ParseFile($p,[ref]$null,[ref]$e); $e`.
-- **Python stdout cp1252 default** — add `sys.stdout.reconfigure(encoding="utf-8")` early in `main()` if a script may print non-ASCII.
-- **GitHub PAT scope notes:** repo creation needs **account-level** `Administration: Write`. Pushing `.github/workflows/*.yml` needs the `workflow` scope. Push protection scans for real-looking secrets — defang fake fixtures.
+## How Phase 2 was built (process reference)
 
-## Project-specific skill-invocation policy
-
-The repo's `CLAUDE.md` restricts auto-invoked skills to the `superpowers-extended-cc` plugin only. **Honor that allow-list.** Explicit `/<skill>` invocation from me always wins. Do not auto-fire user-global skills like `meta-map`, `plan-interviewer`, `worker`, `reviewer`, etc.
-
-That said, `executing-plans` and `subagent-driven-development` are both in the allow-list. Use them.
-
-## What to do if something is unclear or seems wrong
-
-- If a task's code block has a clear bug (typo, wrong path, missing import), fix it inline as you execute that task and note it in the commit message.
-- If a task is missing a step or you find a real gap, log it as a `Bug` / `Retro` and continue. Do not stop to re-architect.
-- If you hit a hard blocker (e.g. `gh` CLI not authenticated for Task 21, or the MCP SDK has fundamentally moved on), surface it to the user with the exact failing command and your diagnosis. Then wait for direction.
-- **Do not invent new scope.** The plan is the contract. If a "nice-to-have" suggests itself mid-build, write it down as a future Spec / Finding, don't bolt it onto the current task.
-
-## Confirming you're ready
-
-Your first action in the new session should be:
-
-1. `Read agentic-engineering-system-prd-v3.md` (skim — sections you care about: Locked Gating Decisions, Core Mechanics 1–4, Phase 0 build list).
-2. `Read docs/plans/2026-05-17-phase-0-foundations.md` (the plan you'll execute).
-3. `TaskList` (confirm the 22 tasks + dependency graph are present).
-4. Invoke `superpowers-extended-cc:executing-plans docs/plans/2026-05-17-phase-0-foundations.md`.
-
-Then start with Task 0 and go in dependency order. Each task is one commit. The `.tasks.json` mirrors progress.
-
-When all 22 tasks are completed, Phase 0 is done. Report back with: total tests passing, the GitHub repo URL, and a one-paragraph summary of anything that surprised you during execution (becomes Phase 1 input).
-
-Good luck.
+brainstorming -> writing-plans -> subagent-driven-development: a fresh implementer subagent per task, two-stage review (spec compliance, then code quality) after each, then a final whole-implementation capstone review (which caught a Critical the per-task tests missed: a worktree re-dispatch crash, now fixed + test-covered). Same pattern works for Phase 2.1 / Phase 3.

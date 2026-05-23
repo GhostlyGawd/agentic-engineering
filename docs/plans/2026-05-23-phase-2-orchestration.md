@@ -1030,6 +1030,8 @@ import it at runtime). Existing e2e tests import from here unchanged.
 """
 from agentic_mcp.headless import (  # noqa: F401
     ClaudeUnavailable,
+    _claude_exe,
+    _kill_tree,
     claude_on_path,
     result_text,
     run_claude_headless,
@@ -1295,6 +1297,70 @@ Expected: PASS
 git add agents/orchestrator.md commands/orchestrate.md mcp-server/tests/test_agent_docs.py
 git commit -m "feat(orchestrator): single-tick orchestrate command + orchestrator agent"
 ```
+
+---
+
+### Task 7.5: Orchestrator tick entry point (`orchestrate.py`)
+
+**Goal:** Compose the Phase 2 components into one runnable, stateless tick — `tick()` wires weed -> ready-set -> overlap/claim -> headless `Pool` dispatch into worktrees -> harvest -> review -> DAG-ordered merge -> calibrate. All side-effecting steps are **seam-injectable** (default to real implementations; stubbed in fast tests) so the whole pipeline is deterministically testable without spawning `claude` or git. Add a `python -m agentic_mcp.orchestrate --once` CLI.
+
+**Files:**
+- Create: `mcp-server/src/agentic_mcp/orchestrate.py`
+- Test: `mcp-server/tests/test_orchestrate.py`
+
+**Design — `tick()` contract:**
+
+```python
+def tick(
+    conn,
+    *,
+    repo: str = ".",
+    pool_size: int = 3,
+    weed_days: int = 14,
+    launch_fn=...,        # job dict -> {"task_id","ok","sha"|"error"}; default wraps headless.run_claude_headless in try/except
+    worktree_factory=..., # (repo, task_id) -> (worktree_path, branch_name); default: git worktree add
+    merge_fn=...,         # (repo, branch) -> None (raises on conflict); default: git merge --no-ff
+    review_fn=...,        # (conn, task_id, job_result) -> {"verdict":"CLEAN"|"NEEDS_FIXING","reviewer":role,"hit":bool}; default: dispatch headless reviewer
+) -> dict
+```
+
+`tick()` returns a structured summary: `{"weeded":[ids], "dispatched":[ids], "merged":[ids], "failed":[ids], "escalations":[{task_id,error}], "calibrated":[roles]}`. It NEVER raises for normal worker/review/merge failures — those land in `failed`/`escalations`. It only propagates programming errors.
+
+**Tick algorithm (the order is the contract):**
+1. **Weed:** `result["weeded"] = weeding.flag_stale_specs(conn, weed_days)`.
+2. **Ready set:** `ready = scheduler.ready_tasks(conn)`.
+3. **Overlap filter:** build `candidates = [{"task_id": t["id"], "scope_paths": task_scope(t)} for t in ready]`; `batch = claims.detect_overlap(candidates)[:pool_size]`.
+4. **Claim + worktree + jobs:** for each batched task: `worktree_factory(repo, tid)` -> `(wt, branch)`; `claims.claim_scope(conn, tid, scope_paths, worktree=wt, branch=branch)` (skip task on `ClaimConflict`); `nodes.update_node(conn, tid, status="in_progress")`; append job `{"task_id":tid,"worktree":wt,"branch":branch}`; remember `claim_id`.
+5. **Dispatch pool:** `results = headless.Pool(max_workers=pool_size).run(jobs, launch_fn)` (empty list if no jobs).
+6. **Review + calibrate:** for each `ok` job result, call `review_fn`; record the reviewer outcome via `calibration.record_outcome(conn, reviewer, hit)` then `calibration.adjust_trust(conn, reviewer)` (append reviewer to `result["calibrated"]` when `adjust_trust` reports `adjusted=True`). A `NEEDS_FIXING` verdict leaves the task `in_progress` and the claim held (it loops next tick); a `CLEAN` verdict proceeds to merge.
+7. **Merge in DAG order:** compute `merge_order` over the CLEAN task ids using their `depends-on` edges (`_dep_edges(conn, ids)` built via `relations.neighbors(conn, tid, "depends-on", "out")` intersected with the CLEAN set); for each in order: `merge_fn(repo, branch)`; on success `nodes.update_node(conn, tid, status="merged")`, `claims.release_claim(conn, claim_id)`, append to `merged`; on exception append `{task_id,error}` to `escalations` and leave the claim held.
+8. **Failures:** worker results with `ok=False` -> append `task_id` to `failed`, leave task `in_progress` + claim held for next-tick retry.
+9. Return `result`.
+
+`task_scope(task) -> list[str]`: convention — `task["tags"]` parsed as a JSON array of path globs; absent/unparseable -> `["**"]` (whole-repo, which overlaps everything and thus forces serial — the safe default).
+
+**Default seam implementations (real):**
+- `_real_launch(job)`: wraps `headless.run_claude_headless(prompt, cwd=job["worktree"], ...)` in try/except, returning `{"task_id":..,"ok":True,"sha":<git rev-parse HEAD in worktree>}` or `{"task_id":..,"ok":False,"error":str(e)}`. (This is the exception-catching `launch_fn` the `Pool` docstring requires.)
+- `_real_worktree(repo, task_id)`: `git -C repo worktree add <path> -b <branch>`; returns `(path, branch)`. Use a deterministic path like `<repo>/.worktrees/<task_id>` and branch `orch/<task_id>`.
+- `_real_merge(repo, branch)`: `git -C repo merge --no-ff <branch>`; raises `subprocess.CalledProcessError` on conflict (which step 7 catches into escalations).
+- `_real_review(conn, task_id, job_result)`: dispatch a headless reviewer (Phase-1 panel) — for this task, a minimal default that returns `{"verdict":"CLEAN","reviewer":"code-reviewer","hit":True}` is acceptable IF clearly marked as the integration default that Task 8's e2e overrides with the real review path. (Keep the real reviewer dispatch thin; the heavy review logic lives in the existing `/agentic:review-pr` flow.)
+
+**CLI:** `python -m agentic_mcp.orchestrate --once [--pool N] [--weed-days N] [--repo PATH]` opens the DB at `AGENTIC_DB_PATH` (reuse `server._db_path` logic or `db.connect`), calls `tick(...)` once, prints the JSON summary, exits 0. `--once` is accepted (and is currently the only mode; a bare invocation behaves the same — the flag exists for forward-compat and `/loop` clarity).
+
+**Acceptance Criteria:**
+- [ ] `tick()` with ALL seams stubbed runs the full pipeline against a staged graph and returns the structured summary — deterministic, no `claude`, no real git.
+- [ ] Two non-overlapping ready Tasks (disjoint `tags` scopes) are BOTH dispatched and BOTH merged in one tick (stubbed seams); their claims end released and statuses `merged`.
+- [ ] Two overlapping Tasks: only one is dispatched in the tick (serial-when-shared).
+- [ ] A stubbed `launch_fn` returning `ok=False` for a task leaves it in `failed`, status `in_progress`, claim held.
+- [ ] A stubbed `review_fn` returning a low-`hit` reviewer outcome drives `record_outcome` + (after enough misses) `adjust_trust`; the `calibrated` list reflects a fired adjustment.
+- [ ] Merge order respects `depends-on` (a dependent task merges after its dependency).
+- [ ] `python -m agentic_mcp.orchestrate --once` runs a tick against a temp DB and prints JSON (smoke test, stubbed or empty graph).
+
+**Verify:** From `mcp-server/`: `./.venv/Scripts/python.exe -m pytest tests/test_orchestrate.py -v` then `./.venv/Scripts/python.exe -m pytest -m "not llm" -q`.
+
+**Steps:** TDD — write `tests/test_orchestrate.py` first (stub every seam: `launch_fn`/`worktree_factory`/`merge_fn`/`review_fn` as in-memory fakes; build the graph with `nodes.create_node` + `relations.link_nodes` using `implements`/`depends-on`; assert the returned summary + resulting graph state). Confirm failure. Then implement `orchestrate.py`. Then the CLI smoke test. Commit `feat(orchestrate): stateless tick entry point composing the Phase 2 pipeline`.
+
+> **Implementer note:** this is an integration task — favor clarity and the seam boundaries above all. Keep each seam's real implementation small; the point of the seams is that Task 8 swaps in the real `claude`/git path while the fast tests use fakes. Do NOT spawn real `claude` or create real worktrees in `tests/test_orchestrate.py`.
 
 ---
 
