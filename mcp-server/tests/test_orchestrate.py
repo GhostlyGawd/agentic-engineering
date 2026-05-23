@@ -313,3 +313,37 @@ def test_real_worktree_idempotent_on_redispatch(tmp_path):
     path2, branch2 = orchestrate._real_worktree(str(repo), "t1")
     assert path1 == path2
     assert branch1 == branch2 == "orch/t1"
+
+
+def test_stale_node_surfaced_readonly(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        nid = nodes.create_node(conn, "Goal", status="open", owner="t", body="b")
+        # Backdate last_touched well past the default 14-day threshold.
+        conn.execute("UPDATE goal SET last_touched=? WHERE id=?",
+                     ("2000-01-01T00:00:00+00:00", nid))
+        conn.commit()
+        before = nodes.get_node(conn, nid)
+        result = orchestrate.tick(
+            conn, launch_fn=fake_launch_ok, worktree_factory=fake_worktree,
+            merge_fn=fake_merge_ok, review_fn=fake_review_clean,
+        )
+        assert nid in result["stale_nodes"]
+        after = nodes.get_node(conn, nid)
+        assert after["status"] == before["status"]           # not auto-closed
+        assert after["last_touched"] == before["last_touched"]  # not touched
+    finally:
+        conn.close()
+
+
+def test_fresh_node_not_surfaced(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        nid = nodes.create_node(conn, "Goal", status="open", owner="t", body="b")
+        result = orchestrate.tick(
+            conn, launch_fn=fake_launch_ok, worktree_factory=fake_worktree,
+            merge_fn=fake_merge_ok, review_fn=fake_review_clean,
+        )
+        assert nid not in result["stale_nodes"]
+    finally:
+        conn.close()

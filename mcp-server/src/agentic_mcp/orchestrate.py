@@ -137,6 +137,7 @@ def tick(
 ) -> dict:
     result = {
         "weeded": [],
+        "stale_nodes": [],
         "dispatched": [],
         "merged": [],
         "failed": [],
@@ -144,8 +145,11 @@ def tick(
         "calibrated": [],
     }
 
-    # 1. Weed stale specs.
+    # 1. Weed: flag stale dispatched specs (stamps stale_flagged_at) AND surface
+    # stale non-terminal nodes for triage. find_stale_nodes is read-only by
+    # contract - it never changes status or sets a flag; we only report ids.
     result["weeded"] = weeding.flag_stale_specs(conn, weed_days)
+    result["stale_nodes"] = [n["id"] for n in weeding.find_stale_nodes(conn, weed_days)]
 
     # 2. Ready set.
     ready = scheduler.ready_tasks(conn)
