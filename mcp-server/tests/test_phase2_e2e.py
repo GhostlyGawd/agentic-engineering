@@ -128,33 +128,28 @@ def _setup_git_repo(repo: Path) -> None:
     _git(["commit", "-m", "init: base commit for e2e test"], cwd=str(repo))
 
 
-def _make_launch_fn(db_path: Path, mcp_config: Path, timeout: int = 1200):
+def _make_launch_fn(task_files: dict, mcp_config: Path, timeout: int = 1200):
     """Return a launch_fn that drives claude with a concrete file-creation prompt.
 
     The default _real_launch uses a generic placeholder prompt that won't
     reliably create a named file in the worktree. We override it here with a
-    prompt that tells the agent exactly which file to create, what to write,
-    and to commit it. The agent receives the task body (embedded in the prompt)
-    which encodes the target filename.
+    self-contained prompt that names the exact file to create, its content, and
+    the commit step. *task_files* maps each task id to the filename that task
+    must produce, so the prompt never has to read the graph DB.
     """
     def _launch(job: dict) -> dict:
         tid = job["task_id"]
         wt = job["worktree"]
-        branch = job["branch"]
-        # The task body is stored in graph; derive target file from branch name
-        # (branch = orch/<tid>). We use the worktree path directly: the task
-        # body was set to "create <filename> containing the word OK" so we
-        # include the full instruction in the prompt to be explicit.
+        target = task_files[tid]
         prompt = (
             f"You are a builder agent working in a git worktree. "
             f"Your task id is {tid}. "
-            f"Look at the task body in the graph DB at {db_path} to find the target file. "
-            f"Create the file specified in the task body in the current directory "
+            f"Create a file named {target} in the current directory "
             f"with the content 'OK', then commit it with message 'feat: task {tid}'. "
-            f"Use git add <file> then git commit. Do not use git push. Stop after committing."
+            f"Use git add {target} then git commit. Do not use git push. Stop after committing."
         )
         try:
-            # Pass mcp_config so the agent can read the graph if needed.
+            # Pass mcp_config so the agent can reach the MCP server if it needs to.
             headless.run_claude_headless(
                 prompt, cwd=wt, timeout=timeout, mcp_config=mcp_config
             )
@@ -223,7 +218,8 @@ def test_parallel_specs_build_and_merge(tmp_path):
     relations.link_nodes(conn, task_b, spec_b, "implements")
 
     # --- 4. Custom launch_fn with concrete prompt ---------------------------
-    launch_fn = _make_launch_fn(db_path, mcp_cfg, timeout=1200)
+    task_files = {task_a: "fileA.txt", task_b: "fileB.txt"}
+    launch_fn = _make_launch_fn(task_files, mcp_cfg, timeout=1200)
 
     # Stub review_fn: return CLEAN with calibrate=False (don't pollute calibration).
     def _review_clean(conn_, tid, job_result):
@@ -250,6 +246,9 @@ def test_parallel_specs_build_and_merge(tmp_path):
             )
         except Exception:
             pass
+        # Close the tick connection BEFORE reopening for assertions: on Windows
+        # an agent subprocess may still hold a handle, so we want a clean single
+        # reader (conn2) for the final reads rather than two live connections.
         conn.close()
 
     # --- 6. Assertions (structured state only; no prose inspection) ---------
