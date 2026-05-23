@@ -136,9 +136,12 @@ Each tick runs these steps in order:
    with a held Claim wait for a later serial tick.
 4. **Dispatch** - for each open pool slot (default 3), create a git worktree + branch
    and spawn a headless worker (`claude -p` subprocess, `builder` agent).
-5. **Harvest, review, merge** - worker CLEAN -> spawn headless reviewer (full Phase-1
-   panel); reviewer CLEAN -> merge in DAG order; `release_claim`. Conflicts and
-   escalations are surfaced to the user and never auto-resolved.
+5. **Harvest, review, merge** - worker CLEAN -> handoff to the reviewer step. The
+   orchestrator agent drives the full Phase-1 review panel (spec-checker gate, then
+   code-reviewer + contrarian) via tool calls; the `orchestrate.py` Python tick
+   exposes a `review_fn` seam for this and ships a thin CLEAN-returning default that
+   the e2e and agent override. Reviewer CLEAN -> merge in DAG order; `release_claim`.
+   Conflicts and escalations are surfaced to the user and never auto-resolved.
 6. **Calibrate** - record per-role outcomes via `record_outcome`; if a threshold
    crosses, call `adjust_trust` (sets/clears `distrusted`, changes scheduling for
    that role).
@@ -174,7 +177,7 @@ idempotent (re-running is a no-op).
 
 | Entity | Description |
 |--------|-------------|
-| `/agentic:orchestrate` | Tick driver. Args: `--once` (default; loop-friendly), `--pool N` (default 3), `--weed-days N` (default 14). Implemented in `orchestrate.py` as `python -m agentic_mcp.orchestrate --once`. |
+| `/agentic:orchestrate` | Tick driver. Args: `--once` (convention flag signaling single-tick intent for `/loop`/cron callers; the CLI always runs exactly one tick), `--pool N` (default 3), `--weed-days N` (default 14). Implemented in `orchestrate.py` as `python -m agentic_mcp.orchestrate --once`. |
 | `agents/orchestrator.md` | System prompt for the scheduler role. Computes the DAG, detects overlap, weeds, calibrates, surfaces escalations. Implements nothing. |
 
 ### New MCP tools (7 added; Phase 2 total: 25)
@@ -183,7 +186,7 @@ idempotent (re-running is a no-op).
 |------|---------|
 | `claim_scope` | Record a Task's claimed paths; returns a conflict result if they overlap an open held Claim. Returns a `claim_id` UUID (not the task id) for use with `release_claim`. |
 | `release_claim` | Release a Claim on task completion/merge. Takes the `claim_id` UUID from `claim_scope`. |
-| `detect_overlap` | Given a ready-task candidate list, return the maximum non-overlapping batch (the scheduler's core query). |
+| `detect_overlap` | Given a ready-task candidate list (`{task_id, scope_paths}` dicts), return the maximum non-overlapping batch (the scheduler's core serial-when-shared query). |
 | `flag_stale` | Mark Specs/nodes stale-for-triage (weeding output). Sets `spec.stale_flagged_at`. |
 | `record_outcome` | Append a hit or miss to a role's calibration record. |
 | `get_calibration` | Read a role's current score and `distrusted` flag (orchestrator consults before scheduling reviews). |
@@ -217,9 +220,11 @@ The `llm` marker gates two exit-gate suites:
 - **`test_phase1_e2e.py`** - three real-agent scenarios: stubborn Critical loop
   (diagnostic at iteration 3, resolve at iteration 4, Retro tagged `implementation`);
   mixed-severity auto-triage; contrarian catching a distinct architectural flaw.
-- **`test_phase2_e2e.py`** - three orchestration scenarios: two orthogonal Specs
-  built in parallel worktrees with merge; deliberate stale weed; scripted reviewer
-  miss driving `adjust_trust` and honoring the distrust flag on the next tick.
+- **`test_phase2_e2e.py`** - three orchestration scenarios: scripted misses driving
+  `adjust_trust` to set `distrusted=1` (deterministic); a deliberate stale weed
+  (deterministic); two orthogonal Specs built in parallel worktrees with merge. Only
+  the parallel-build scenario needs a live `claude`; the calibration and weeding
+  scenarios are deterministic but live under the `llm` marker.
 
 The fast suite covers everything else and is the default
 (`addopts = "-m \"not llm\""` in `pyproject.toml`).
