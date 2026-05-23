@@ -26,6 +26,7 @@ def test_record_outcome_updates_score(tmp_db_path):
         c = calibration.get_calibration(conn, "code-reviewer")
         assert c["observations"] == 5
         assert c["hits"] == 5
+        assert c["misses"] == 0
         assert c["score"] > 0.7  # 6/7 with Laplace smoothing
     finally:
         conn.close()

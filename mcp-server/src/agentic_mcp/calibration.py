@@ -72,7 +72,7 @@ def adjust_trust(conn: sqlite3.Connection, role: str) -> dict:
         target = 0
     adjusted = target != current
     if adjusted:
-        _ensure_row(conn, role)
+        _ensure_row(conn, role)  # defensive: row always exists via record_outcome; INSERT OR IGNORE is a cheap no-op here
         conn.execute(
             "UPDATE calibration SET distrusted=?, last_adjusted_at=? WHERE role=?",
             (target, _now(), role),
