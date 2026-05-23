@@ -118,7 +118,7 @@ Then go back to Step 1 for the next round.
 ## Step 6 - Close the loop
 
 - For each resolved Critical, `resolve_critical_loop(loop_id=<id>)` and write a
-  `log_retro(body=..., failed_layer=<spec|implementation|review|unknowable>,
+  `log_retro(body=..., failed_layer=<spec|implementation|integration|review|unknowable>,
   caused_by_finding_id=<finding_id>)`.
 - Log one `Strength` finding summarizing what held up (calibration + stability
   baseline for the next review).

@@ -55,9 +55,14 @@ roadmap.
 **Shipped in Phase 1:** code-reviewer + contrarian roles + four-tier severity loop
 + spec-writer agent + critical-loop persistence + build/review commands (see below).
 
-**Deferred to later phases:** `sqlite-vec` / vec0 (Phase 3), orchestrator +
-parallelism + git worktrees (Phase 2), pattern-finder + architectural-review +
-meta-graph (Phase 3), self-improvement + reviewer calibration (Phase 4).
+**Shipped in Phase 2:** stateless single-tick orchestrator, headless worker/reviewer
+pool, serial-when-shared scope isolation, git worktree dispatch, scheduled weeding,
+trust-weighting calibration, schema v3 (`claim` + `calibration` tables), and 7 new
+MCP tools (see below).
+
+**Deferred to later phases:** `sqlite-vec` / vec0 (Phase 3), pattern-finder +
+architectural-review + meta-graph (Phase 3), self-improvement + reviewer calibration
+learning beyond trust-weighting (Phase 4).
 
 Phase 0 is **Windows-only**. The SessionStart hook is PowerShell 5.1; the
 walk-up test is `skipif`-gated on `sys.platform != 'win32'`. A portable POSIX
@@ -107,6 +112,100 @@ Phase 0 `graph.db` in place: it adds the `critical_loop` table plus
 | `/agentic:review-pr` | Full review loop: auto-detect target (PR diff or working tree); gate (spec-checker) then parallel (code-reviewer + contrarian, blind); classify severity; manage the critical loop; fire the 3-iteration diagnostic; close with Strength + Retros. References `detect_stability_contradiction`. |
 | `/agentic:new-spec` | Dispatch the spec-writer subagent; report the created Spec id or the retry-cap escalation. |
 
+## Phase 2: Orchestration & Parallelism
+
+Phase 2 ships the stateless single-tick orchestrator, headless worker/reviewer
+pool, serial-when-shared scope isolation, git worktree dispatch, scheduled graph
+weeding, and per-role trust-weighting calibration.
+
+### Orchestrator model
+
+The orchestrator is **stateless and single-tick.** Each `/agentic:orchestrate --once`
+invocation is a fresh process: it hydrates all state from `graph.db`, does one tick,
+and exits. `/loop` or cron owns the cadence. No long-lived session accumulates a
+transcript.
+
+Each tick runs these steps in order:
+
+1. **Weed** - flag dispatched Specs untouched > 14 days (configurable) via `flag_stale`.
+   Never auto-closes; every stale Spec is surfaced for user triage. (Node-level
+   weeding across all entity types exists as `weeding.find_stale_nodes` but is not
+   yet wired into the tick - deferred.)
+2. **Compute the ready set** - Tasks whose `depends-on` deps are all resolved and
+   whose parent Spec is dispatched.
+3. **Overlap filter (serial-when-shared)** - `detect_overlap` partitions the ready
+   set into a non-overlapping runnable batch and a held set. Tasks that share scope
+   with a held Claim wait for a later serial tick.
+4. **Dispatch** - for each open pool slot (default 3), create a git worktree + branch
+   and spawn a headless worker (`claude -p` subprocess, `builder` agent).
+5. **Harvest, review, merge** - worker CLEAN -> handoff to the reviewer step. The
+   orchestrator agent drives the full Phase-1 review panel (spec-checker gate, then
+   code-reviewer + contrarian) via tool calls; the `orchestrate.py` Python tick
+   exposes a `review_fn` seam for this and ships a thin CLEAN-returning default that
+   the e2e and agent override. Reviewer CLEAN -> merge in DAG order; `release_claim`.
+   Conflicts and escalations are surfaced to the user and never auto-resolved.
+6. **Calibrate** - record per-role outcomes via `record_outcome`; if a threshold
+   crosses, call `adjust_trust` (sets/clears `distrusted`, changes scheduling for
+   that role).
+7. **Exit** - write the tick summary. The graph fully reflects progress.
+
+### Headless worker/reviewer pool
+
+Workers and reviewers run as ephemeral `claude -p --permission-mode bypassPermissions`
+subprocesses, each in an isolated git worktree. The Pool enforces a per-process
+timeout with process-tree kill on hang. One failing job never aborts the batch.
+
+Each worker result is a structured `{task_id, ok, error}` dict read back from the
+subprocess - orchestrator context never retains worker transcripts.
+
+Workers reuse the Phase-1 agents (`builder.md`, `code-reviewer.md`,
+`contrarian.md`, `spec-checker.md`), now invoked headlessly. The `headless.py`
+module (promoted from `tests/llm_harness.py`) provides the subprocess launch,
+`--output-format json` result parse, timeout, UTF-8 decode, and process-tree kill.
+
+### New entities (schema `user_version` 3)
+
+- **`claim`** table: `id, task_id, scope_paths (JSON array), worktree, branch,
+  status (held|released), created_at`. Backs serial-when-shared and worktree
+  bookkeeping.
+- **`calibration`** table: `role TEXT PRIMARY KEY, observations, hits, misses,
+  score REAL, last_adjusted_at, distrusted INTEGER (0|1)`. One row per role.
+- **`spec.stale_flagged_at`** column: weeding output.
+
+The schema v3 migration runs via the existing versioned-migration framework; it is
+idempotent (re-running is a no-op).
+
+### New command and agent
+
+| Entity | Description |
+|--------|-------------|
+| `/agentic:orchestrate` | Tick driver. Args: `--once` (convention flag signaling single-tick intent for `/loop`/cron callers; the CLI always runs exactly one tick), `--pool N` (default 3), `--weed-days N` (default 14). Implemented in `orchestrate.py` as `python -m agentic_mcp.orchestrate --once`. |
+| `agents/orchestrator.md` | System prompt for the scheduler role. Computes the DAG, detects overlap, weeds, calibrates, surfaces escalations. Implements nothing. |
+
+### New MCP tools (7 added; Phase 2 total: 25)
+
+| Tool | Purpose |
+|------|---------|
+| `claim_scope` | Record a Task's claimed paths; returns a conflict result if they overlap an open held Claim. Returns a `claim_id` UUID (not the task id) for use with `release_claim`. |
+| `release_claim` | Release a Claim on task completion/merge. Takes the `claim_id` UUID from `claim_scope`. |
+| `detect_overlap` | Given a ready-task candidate list (`{task_id, scope_paths}` dicts), return the maximum non-overlapping batch (the scheduler's core serial-when-shared query). |
+| `flag_stale` | Flag dispatched Specs stale-for-triage (weeding output). Sets `spec.stale_flagged_at`. |
+| `record_outcome` | Append a hit or miss to a role's calibration record. |
+| `get_calibration` | Read a role's current score and `distrusted` flag (orchestrator consults before scheduling reviews). |
+| `adjust_trust` | On threshold-crossing: set or clear `distrusted`, stamp `last_adjusted_at`. Satisfies the exit gate when it fires. |
+
+### Phase 2 exit gate
+
+**PRD gate:** two teams build in parallel on orthogonal tasks without merge
+collisions; graph weeding runs on schedule; at least one calibration adjustment has
+fired.
+
+The live exit-gate test is `tests/test_phase2_e2e.py` (marked `llm`; three
+scenarios: parallel orthogonal builds + merge, deliberate stale weed, scripted
+reviewer miss driving `adjust_trust`). The fast suite covers all unit logic (overlap
+detection, DAG merge order, weeding thresholds, calibration math, claim lifecycle,
+schema v3 migration idempotency, Pool wrapper with a stubbed launcher).
+
 ### Running the test suite
 
 ```powershell
@@ -118,11 +217,19 @@ cd mcp-server
 .\.venv\Scripts\python.exe -m pytest -m llm -q
 ```
 
-The `llm` marker gate (`test_phase1_e2e.py`) exercises three real-agent scenarios:
-stubborn Critical loop (diagnostic at iteration 3, resolve at iteration 4, Retro
-tagged `implementation`); mixed-severity auto-triage; and contrarian catching a
-distinct architectural flaw. The fast suite covers everything else and is the
-default (`addopts = "-m \"not llm\""` in `pyproject.toml`).
+The `llm` marker gates two exit-gate suites:
+
+- **`test_phase1_e2e.py`** - three real-agent scenarios: stubborn Critical loop
+  (diagnostic at iteration 3, resolve at iteration 4, Retro tagged `implementation`);
+  mixed-severity auto-triage; contrarian catching a distinct architectural flaw.
+- **`test_phase2_e2e.py`** - three orchestration scenarios: scripted misses driving
+  `adjust_trust` to set `distrusted=1` (deterministic); a deliberate stale weed
+  (deterministic); two orthogonal Specs built in parallel worktrees with merge. Only
+  the parallel-build scenario needs a live `claude`; the calibration and weeding
+  scenarios are deterministic but live under the `llm` marker.
+
+The fast suite covers everything else and is the default
+(`addopts = "-m \"not llm\""` in `pyproject.toml`).
 
 ## Install (from a clone of this repo)
 
@@ -138,7 +245,7 @@ pip install -e ".[dev]"
 pytest -v
 ```
 
-All 107 fast tests should pass (the 4 `llm`-marked exit-gate tests are
+All 145 fast tests should pass (the `llm`-marked exit-gate tests are
 deselected by default; run them with `pytest -m llm` against a live `claude`
 CLI session).
 
@@ -177,7 +284,7 @@ all pass `validate_spec`:
 `skills/spec-writing/SKILL.md` walks through the Socratic intent-clarification
 pass to run before locking the spec.
 
-## MCP tool surface (18 tools)
+## MCP tool surface (25 tools)
 
 **Phase 0 (10):** `create_node`, `update_node`, `get_node`, `link_nodes`,
 `query_graph`, `get_required_reads`, `log_finding`, `mark_criterion_satisfied`,
@@ -187,7 +294,10 @@ pass to run before locking the spec.
 `resolve_critical_loop`, `get_open_loops`, `record_triage`, `log_retro`,
 `detect_stability_contradiction`.
 
-See `skills/router/SKILL.md` for what each Phase 0 tool does.
+**Phase 2 (7):** `claim_scope`, `release_claim`, `detect_overlap`, `flag_stale`,
+`record_outcome`, `get_calibration`, `adjust_trust`.
+
+See `skills/router/SKILL.md` for what each tool does.
 
 ## How to extend
 

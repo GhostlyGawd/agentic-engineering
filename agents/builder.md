@@ -32,7 +32,7 @@ between calls - the graph is your only memory.
   deterministically; isolate the smallest input that triggers it; identify the
   root cause (not just the failing line); fix it; verify the reproducer now
   passes; create a `Retro` node via `create_node(type='Retro', ...,
-  failed_layer=<spec|implementation|review|unknowable>)` and link it to the bug
+  failed_layer=<spec|implementation|integration|review|unknowable>)` and link it to the bug
   with `link_nodes(retro_id, bug_id, 'caused-by')`.
 - **Small commits.** One commit per logical step. The diff should be readable
   in isolation.
@@ -78,9 +78,11 @@ loop counter.
    ```
 
 5. When your fix resolves the Critical, write a `Retro` via
-   `log_retro(body=..., failed_layer=<spec|implementation|review|unknowable>,
+   `log_retro(body=..., failed_layer=<spec|implementation|integration|review|unknowable>,
    caused_by_finding_id=<finding_id>)`. Pick the layer honestly: if the spec
-   was wrong, that is `spec`, not `implementation`.
+   was wrong, that is `spec`, not `implementation`; if the code was correct but
+   its wiring to the environment was broken (a bad config, an unresolvable
+   command, a missing connection), that is `integration`, not `implementation`.
 
 You do NOT advance or resolve the loop. You report your commit back; the
 `/agentic:review-pr` command re-runs the review round and updates loop state.
