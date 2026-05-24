@@ -60,19 +60,17 @@ def task_scope(task: dict) -> list[str]:
 
 
 # --- real seams (kept small; tests inject stubs) ---------------------------
-_BUILDER_PROMPT = (
-    "You are a builder agent. Implement the assigned task in this worktree, "
-    "commit your work, then stop."
-)
-
-
 def _git(args: list[str]) -> subprocess.CompletedProcess:
     # No shell=True; capture_output handles native-exe stderr fine on this box.
     return subprocess.run(["git", *args], check=True, capture_output=True, text=True)
 
 
 def _real_launch(job: dict) -> dict:
-    """Run one builder agent headless, return a structured result.
+    """Run one builder agent headless against its graph-assembled prompt.
+
+    The prompt and (optional) mcp_config are assembled in tick()'s single-
+    threaded body and passed in via the job dict, because this function runs in
+    a Pool worker THREAD and must never touch the sqlite connection.
 
     MUST catch its own exceptions: headless.Pool re-raises whatever launch_fn
     raises, which would abort the whole batch. So every failure is folded into
@@ -80,9 +78,14 @@ def _real_launch(job: dict) -> dict:
     """
     tid = job["task_id"]
     try:
-        headless.run_claude_headless(_BUILDER_PROMPT, cwd=job["worktree"])
+        headless.run_claude_headless(
+            job["prompt"], cwd=job["worktree"], mcp_config=job.get("mcp_config"),
+        )
         sha = _git(["-C", job["worktree"], "rev-parse", "HEAD"]).stdout.strip()
-        return {"task_id": tid, "ok": True, "sha": sha}
+        # Carry the worktree forward: tick()'s review phase needs it to run
+        # review-pr in the right directory (the launch result is what review_fn
+        # receives as job_result).
+        return {"task_id": tid, "ok": True, "sha": sha, "worktree": job["worktree"]}
     except Exception as e:  # noqa: BLE001 - launch_fn must never raise to the Pool
         return {"task_id": tid, "ok": False, "error": str(e)}
 

@@ -10,6 +10,7 @@ _real_worktree seam against a temp `git init` repo (git is available; only
 import json
 import shutil
 import subprocess
+import types
 
 import pytest
 
@@ -668,3 +669,41 @@ def test_build_builder_prompt_tolerates_malformed_criteria(tmp_db_path):
         assert "(none)" in prompt  # no valid criteria -> placeholder
     finally:
         conn.close()
+
+
+# --- _real_launch (claude + git monkeypatched) ---------------------------
+def test_real_launch_runs_prompt_and_returns_worktree(monkeypatch):
+    calls = {}
+
+    def fake_run(prompt, cwd, timeout=900, mcp_config=None):
+        calls["prompt"] = prompt
+        calls["cwd"] = cwd
+        calls["mcp_config"] = mcp_config
+        return {"result": "built"}
+
+    monkeypatch.setattr(orchestrate.headless, "run_claude_headless", fake_run)
+    monkeypatch.setattr(orchestrate, "_git",
+                        lambda args: types.SimpleNamespace(stdout="abc123\n"))
+
+    job = {"task_id": "t1", "worktree": "/wt/t1", "branch": "orch/t1",
+           "prompt": "BUILD THIS", "mcp_config": "/repo/.mcp.json"}
+    out = orchestrate._real_launch(job)
+
+    assert out == {"task_id": "t1", "ok": True, "sha": "abc123",
+                   "worktree": "/wt/t1"}
+    assert calls["prompt"] == "BUILD THIS"
+    assert calls["cwd"] == "/wt/t1"
+    assert calls["mcp_config"] == "/repo/.mcp.json"
+
+
+def test_real_launch_folds_exception_into_error(monkeypatch):
+    def boom(prompt, cwd, timeout=900, mcp_config=None):
+        raise RuntimeError("claude exploded")
+
+    monkeypatch.setattr(orchestrate.headless, "run_claude_headless", boom)
+    job = {"task_id": "t1", "worktree": "/wt/t1", "branch": "orch/t1",
+           "prompt": "BUILD THIS", "mcp_config": None}
+    out = orchestrate._real_launch(job)
+    assert out["task_id"] == "t1"
+    assert out["ok"] is False
+    assert "claude exploded" in out["error"]
