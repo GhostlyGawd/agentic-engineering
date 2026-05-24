@@ -101,3 +101,18 @@ def candidate_groups(conn, scope=None, min_size: int = 3) -> list[dict]:
         }.get(kind, f"{len(ev)} nodes share {key}")
         groups.append({"key": key, "reason": reason, "evidence_ids": sorted(ev)})
     return groups
+
+
+_TRIAGE = {"confirmed", "dismissed"}
+
+
+def triage_pattern(conn, pattern_id: str, disposition: str) -> None:
+    """Move a Pattern open -> confirmed | dismissed. Raises on misuse - this is a
+    direct user/agent action (fail loud), unlike the never-raise tick."""
+    if disposition not in _TRIAGE:
+        raise ValueError(
+            f"unknown disposition: {disposition!r}. Valid: {sorted(_TRIAGE)}")
+    node = nodes.get_node(conn, pattern_id)
+    if node is None or node["type"] != "Pattern":
+        raise ValueError(f"not a Pattern: {pattern_id}")
+    nodes.update_node(conn, pattern_id, status=disposition)

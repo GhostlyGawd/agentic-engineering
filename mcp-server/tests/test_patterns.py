@@ -130,3 +130,38 @@ def test_candidate_groups_superset_not_covered(tmp_db_path):
         assert "parent:S-1" in keys
     finally:
         conn.close()
+
+
+def test_triage_pattern_confirmed_and_dismissed(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        p1 = nodes.create_node(conn, "Pattern", status="open", owner="t", body="p")
+        patterns.triage_pattern(conn, p1, "confirmed")
+        assert nodes.get_node(conn, p1)["status"] == "confirmed"
+        p2 = nodes.create_node(conn, "Pattern", status="open", owner="t", body="p")
+        patterns.triage_pattern(conn, p2, "dismissed")
+        assert nodes.get_node(conn, p2)["status"] == "dismissed"
+    finally:
+        conn.close()
+
+
+def test_triage_pattern_rejects_bad_disposition(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        p = nodes.create_node(conn, "Pattern", status="open", owner="t", body="p")
+        with pytest.raises(ValueError):
+            patterns.triage_pattern(conn, p, "maybe")
+    finally:
+        conn.close()
+
+
+def test_triage_pattern_rejects_non_pattern(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        bug = nodes.create_node(conn, "Bug", status="open", owner="t", body="b")
+        with pytest.raises(ValueError):
+            patterns.triage_pattern(conn, bug, "confirmed")
+        with pytest.raises(ValueError):
+            patterns.triage_pattern(conn, "no-such-id", "confirmed")
+    finally:
+        conn.close()
