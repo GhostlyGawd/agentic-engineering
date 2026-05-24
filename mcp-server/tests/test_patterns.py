@@ -273,3 +273,16 @@ def test_tick_stages_mcp_config_when_db_path_set(tmp_path):
         assert seen["mcp_config"] == repo / ".mcp.json"
     finally:
         conn.close()
+
+
+def test_cli_main_prints_json(tmp_db_path, monkeypatch, capsys):
+    db.init_db(tmp_db_path)  # empty graph
+    monkeypatch.setenv("AGENTIC_DB_PATH", str(tmp_db_path))
+    monkeypatch.setattr("sys.argv",
+                        ["patterns", "--once", "--repo", str(tmp_db_path.parent)])
+    rc = patterns.main()
+    out = json.loads(capsys.readouterr().out)
+    assert out["considered"] == 0
+    assert set(out) >= {"minted", "dismissed", "considered", "errors"}
+    assert rc in (0, None)
+    assert not (tmp_db_path.parent / ".mcp.json").exists()

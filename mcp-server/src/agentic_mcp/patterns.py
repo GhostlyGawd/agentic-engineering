@@ -229,3 +229,33 @@ def find_patterns_tick(conn, *, scope=None, db_path=None, confirm_fn=_real_confi
         except Exception as e:  # noqa: BLE001 - never raise under cron; retry next tick
             result["errors"].append({"key": group["key"], "error": str(e)})
     return result
+
+
+def main() -> int:
+    sys.stdout.reconfigure(encoding="utf-8")  # cp1252 default on this box
+    parser = argparse.ArgumentParser(prog="agentic_mcp.patterns")
+    parser.add_argument("--once", action="store_true",
+                        help="run a single pattern-finding tick and exit")
+    parser.add_argument("--scope", default=None,
+                        help="restrict grouping to this scope")
+    parser.add_argument("--repo", default=".",
+                        help="repo root for agent staging + mcp config")
+    parser.add_argument("--min-size", type=int, default=3,
+                        help="min evidence nodes to form a candidate group")
+    args = parser.parse_args()
+
+    db_path = db.resolve_db_path()
+    conn = db.connect(db_path)
+    try:
+        result = find_patterns_tick(
+            conn, scope=args.scope, db_path=db_path, repo=args.repo,
+            min_size=args.min_size,
+        )
+    finally:
+        conn.close()
+    print(json.dumps(result, default=str))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
