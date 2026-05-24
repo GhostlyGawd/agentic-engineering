@@ -4,42 +4,55 @@
     {
       "id": 1,
       "subject": "Task 1: _verdict_from_graph pure helper",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Pure function returning the review verdict for a spec by counting its open Critical findings (parent_id == spec_id). No claude; fast-unit-testable.\n\n**Files:** Modify mcp-server/src/agentic_mcp/orchestrate.py (after _real_review); Test mcp-server/tests/test_orchestrate.py.\n\n**Acceptance Criteria:** open Critical parent_id==spec_id -> NEEDS_FIXING; none -> CLEAN; reviewer=code-reviewer/hit=True/calibrate=False; resolved Critical ignored; other-spec Critical ignored.\n\n**Verify:** ./.venv/Scripts/python.exe -m pytest tests/test_orchestrate.py -k verdict_from_graph -v\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/orchestrate.py\", \"mcp-server/tests/test_orchestrate.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_orchestrate.py -k verdict_from_graph -v\", \"acceptanceCriteria\": [\"open Critical parent_id==spec_id -> NEEDS_FIXING\", \"none -> CLEAN\", \"calibrate=False\", \"resolved Critical ignored\", \"other-spec Critical ignored\"]}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: _build_builder_prompt pure helper",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Pure function reading Task body + parent Spec criteria from the graph, returning a self-contained builder-role prompt. No claude; fast-unit-testable.\n\n**Files:** Modify mcp-server/src/agentic_mcp/orchestrate.py (after _verdict_from_graph); Test mcp-server/tests/test_orchestrate.py.\n\n**Acceptance Criteria:** prompt contains task body, every criterion text, task id, spec id; missing spec -> no raise, spec id \"(none)\".\n\n**Verify:** ./.venv/Scripts/python.exe -m pytest tests/test_orchestrate.py -k build_builder_prompt -v\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/orchestrate.py\", \"mcp-server/tests/test_orchestrate.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_orchestrate.py -k build_builder_prompt -v\", \"acceptanceCriteria\": [\"contains task body\", \"contains each criterion text\", \"names task id and spec id\", \"missing spec -> no raise, (none)\"]}\n```"
     },
     {
       "id": 3,
       "subject": "Task 3: Rewrite _real_launch to run the assembled prompt",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** _real_launch runs job[\"prompt\"] with mcp_config and returns the worktree path. Verified fast by monkeypatching claude + git.\n\n**Files:** Modify mcp-server/src/agentic_mcp/orchestrate.py (rewrite _real_launch; remove dead _BUILDER_PROMPT); Test mcp-server/tests/test_orchestrate.py.\n\n**Acceptance Criteria:** calls run_claude_headless(job[\"prompt\"], cwd=job[\"worktree\"], mcp_config=job.get(\"mcp_config\")); success -> {task_id, ok:True, sha, worktree}; exception -> {task_id, ok:False, error}; _BUILDER_PROMPT removed.\n\n**Verify:** ./.venv/Scripts/python.exe -m pytest tests/test_orchestrate.py -k real_launch -v\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/orchestrate.py\", \"mcp-server/tests/test_orchestrate.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_orchestrate.py -k real_launch -v\", \"acceptanceCriteria\": [\"uses job prompt + mcp_config + cwd\", \"success returns worktree\", \"exception folded to ok:False\", \"_BUILDER_PROMPT removed\"]}\n```"
     },
     {
       "id": 4,
       "subject": "Task 4: Rewrite _real_review (review-pr headless + verdict from graph)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** _real_review resolves the spec, runs /agentic:review-pr <spec_id> headless in the worktree, derives verdict via _verdict_from_graph. ANY failure -> NEEDS_FIXING. Never merges unreviewed code, never raises.\n\n**Files:** Modify mcp-server/src/agentic_mcp/orchestrate.py (rewrite _real_review); Test mcp-server/tests/test_orchestrate.py.\n\n**Acceptance Criteria:** no open Critical -> CLEAN; open Critical -> NEEDS_FIXING; run_claude_headless exception -> NEEDS_FIXING; invoked with cwd=job_result[\"worktree\"], mcp_config=job_result.get(\"mcp_config\"), prompt \"/agentic:review-pr <spec_id>\"; no parent spec -> NEEDS_FIXING (no raise).\n\n**Verify:** ./.venv/Scripts/python.exe -m pytest tests/test_orchestrate.py -k real_review -v\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/orchestrate.py\", \"mcp-server/tests/test_orchestrate.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_orchestrate.py -k real_review -v\", \"acceptanceCriteria\": [\"no Critical -> CLEAN\", \"Critical -> NEEDS_FIXING\", \"claude exception -> NEEDS_FIXING\", \"correct cwd/mcp/prompt\", \"no spec -> NEEDS_FIXING no raise\"]}\n```"
     },
     {
       "id": 5,
       "subject": "Task 5: Wire tick() - db_path, MCP staging, prompt assembly, review enrichment",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2, 3, 4],
       "description": "**Goal:** tick() stages a resolved .mcp.json once per tick (live path only: gated on db_path AND jobs), assembles each task's builder prompt into the job dict, enriches each launch result with worktree + mcp_config before review. Fast suite (no db_path) unaffected. main() passes resolved db_path.\n\n**Files:** Modify mcp-server/src/agentic_mcp/orchestrate.py (tick signature + body; main()); Test mcp-server/tests/test_orchestrate.py (update fake_launch_ok to carry worktree).\n\n**Acceptance Criteria:** new kw param db_path=None; None -> no staging + suite green; set+>=1 job -> stage_mcp_config once + jobs carry mcp_config; jobs carry prompt; set+no jobs -> no .mcp.json; review input enriched with worktree+mcp_config; main passes db_path; full fast suite green.\n\n**Verify:** ./.venv/Scripts/python.exe -m pytest -m \"not llm\" -q\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/orchestrate.py\", \"mcp-server/tests/test_orchestrate.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest -m \\\"not llm\\\" -q\", \"acceptanceCriteria\": [\"db_path param\", \"None -> no staging, suite green\", \"set+jobs -> stage once, jobs carry mcp_config\", \"jobs carry prompt\", \"set+no jobs -> no file\", \"review input enriched\", \"main passes db_path\"]}\n```"
     },
     {
       "id": 6,
       "subject": "Task 6: Live llm-marked e2e (real build -> review-pr -> merge)",
-      "status": "pending",
+      "status": "completed",
+      "note": "Live-validated 2026-05-24: 1 passed in 173.96s. Build via stdin; staged-agents review (Task B) ran; criterion marked satisfied; merged.",
       "blockedBy": [5],
       "description": "**Goal:** On-demand llm-marked e2e proving the closed loop: dispatched Spec + Task, REAL _real_launch builds from the graph-assembled prompt, REAL _real_review runs /agentic:review-pr gating CLEAN, tick() merges, criterion marked satisfied.\n\n**Files:** Create mcp-server/tests/test_headless_loop_e2e.py.\n\n**Acceptance Criteria:** marked pytest.mark.llm + skipif(not headless.claude_on_path()); uses REAL seams (only tick(..., db_path=...) supplied); after tick task in merged + node status merged + claim released + built file exists; criterion marked satisfied; structured assertions only (no prose).\n\n**Verify:** ./.venv/Scripts/python.exe -m pytest tests/test_headless_loop_e2e.py -m llm -v\n\n```json:metadata\n{\"files\": [\"mcp-server/tests/test_headless_loop_e2e.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_headless_loop_e2e.py -m llm -v\", \"acceptanceCriteria\": [\"llm-marked + skipif no claude\", \"real seams only db_path injected\", \"merged + status merged + claim released + file exists\", \"criterion satisfied\", \"structured assertions only\"]}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task A: headless prompt via stdin (live-discovered fix)",
+      "status": "completed",
+      "note": "headless.run_claude_headless feeds the prompt via stdin, not a -p argv (Windows claude.CMD truncates multi-line argv at the first newline). Unit-tested + live-validated."
+    },
+    {
+      "id": 8,
+      "subject": "Task B: _real_review stages agents + inlines review-pr body (headless has no slash commands)",
+      "status": "completed",
+      "note": "Replaces the infeasible 'claude -p /agentic:review-pr' design. Stages agents/*.md into <worktree>/.claude/agents/ and runs the inlined review-pr body. Fast-tested + live-validated (the staged spec-checker ran; criterion satisfied)."
     }
   ],
-  "lastUpdated": "2026-05-23T00:00:00+00:00"
+  "lastUpdated": "2026-05-24T13:45:00+00:00"
 }
