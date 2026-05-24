@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -60,19 +61,17 @@ def task_scope(task: dict) -> list[str]:
 
 
 # --- real seams (kept small; tests inject stubs) ---------------------------
-_BUILDER_PROMPT = (
-    "You are a builder agent. Implement the assigned task in this worktree, "
-    "commit your work, then stop."
-)
-
-
 def _git(args: list[str]) -> subprocess.CompletedProcess:
     # No shell=True; capture_output handles native-exe stderr fine on this box.
     return subprocess.run(["git", *args], check=True, capture_output=True, text=True)
 
 
 def _real_launch(job: dict) -> dict:
-    """Run one builder agent headless, return a structured result.
+    """Run one builder agent headless against its graph-assembled prompt.
+
+    The prompt and (optional) mcp_config are assembled in tick()'s single-
+    threaded body and passed in via the job dict, because this function runs in
+    a Pool worker THREAD and must never touch the sqlite connection.
 
     MUST catch its own exceptions: headless.Pool re-raises whatever launch_fn
     raises, which would abort the whole batch. So every failure is folded into
@@ -80,9 +79,14 @@ def _real_launch(job: dict) -> dict:
     """
     tid = job["task_id"]
     try:
-        headless.run_claude_headless(_BUILDER_PROMPT, cwd=job["worktree"])
+        headless.run_claude_headless(
+            job["prompt"], cwd=job["worktree"], mcp_config=job.get("mcp_config"),
+        )
         sha = _git(["-C", job["worktree"], "rev-parse", "HEAD"]).stdout.strip()
-        return {"task_id": tid, "ok": True, "sha": sha}
+        # Carry the worktree forward: tick()'s review phase needs it to run
+        # review-pr in the right directory (the launch result is what review_fn
+        # receives as job_result).
+        return {"task_id": tid, "ok": True, "sha": sha, "worktree": job["worktree"]}
     except Exception as e:  # noqa: BLE001 - launch_fn must never raise to the Pool
         return {"task_id": tid, "ok": False, "error": str(e)}
 
@@ -122,18 +126,136 @@ def _real_current_branch(repo: str) -> str:
     return _git(["-C", repo, "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
 
 
-def _real_review(conn, task_id: str, job_result: dict) -> dict:
-    """Minimal integration-default reviewer.
+def _default_source_root() -> str:
+    # Repo root that ships commands/ + agents/. orchestrate.py lives at
+    # <repo>/mcp-server/src/agentic_mcp/orchestrate.py, so parents[3] is the repo
+    # root. In production tick() runs inside the repo, so this default resolves to
+    # the right place; callers (including the e2e) may override via source_root.
+    # On a wrong path the fail-safe except in _real_review degrades to NEEDS_FIXING.
+    return str(Path(__file__).resolve().parents[3])
 
-    Task 8's e2e overrides this with the real Phase-1 reviewer dispatch (spawn
-    the code-reviewer agent, parse its verdict). Kept thin on purpose so this
-    module composes cleanly without pulling in the review machinery.
+
+_REVIEW_AGENTS = ("spec-checker", "code-reviewer", "contrarian", "builder")
+
+
+def _stage_review_agents(source_root: str, worktree: str) -> None:
+    """Copy the four review agents into <worktree>/.claude/agents/ so a headless
+    `claude -p` run can dispatch them by name (headless has no slash commands, but
+    DOES discover project-level .claude/agents/*.md)."""
+    src = Path(source_root) / "agents"
+    dst = Path(worktree) / ".claude" / "agents"
+    dst.mkdir(parents=True, exist_ok=True)
+    # Re-copy every call on purpose: idempotent overwrite refreshes the staged copy
+    # and is harmless on retry-cap re-reviews of the same worktree.
+    for name in _REVIEW_AGENTS:
+        shutil.copy(src / f"{name}.md", dst / f"{name}.md")
+
+
+def _review_prompt(source_root: str, spec_id: str) -> str:
+    """The inlined review-pr command body (frontmatter stripped, spec id substituted).
+    The body IS the four-role loop engine; running it as the prompt reproduces the
+    review without a slash command (which headless does not support)."""
+    text = (Path(source_root) / "commands" / "review-pr.md").read_text(encoding="utf-8")
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) == 3:
+            text = parts[2]
+    return text.replace("$ARGUMENTS", spec_id).replace("$1", spec_id).strip()
+
+
+def _real_review(conn, task_id: str, job_result: dict) -> dict:
+    """Run the real four-role review loop headless, then derive the verdict.
+
+    Headless `claude -p` has NO custom slash commands, so we cannot invoke
+    /agentic:review-pr. Instead we stage the four review agents into the worktree's
+    .claude/agents/ (which a headless run DOES discover) and run the inlined
+    review-pr command body (spec id substituted) as the prompt. That body is the
+    full loop engine: spec-checker gate -> code-reviewer + contrarian -> builder
+    loop-fix -> re-loop. We then read the graph for the verdict.
+
+    Runs in tick()'s single-threaded review phase (may use conn). The review phase
+    has NO outer try/except, so this MUST catch ALL its own exceptions (spec
+    resolution, missing source files, claude error, verdict query) and return
+    NEEDS_FIXING - never merge unreviewed code, never raise.
     """
-    # calibrate=False: this stub's hit=True is a placeholder, not a real review
-    # outcome, so it must NOT bias code-reviewer's calibration on every tick.
-    # Real reviewers (Task 8) omit the flag -> calibrate defaults True.
-    return {"verdict": "CLEAN", "reviewer": "code-reviewer", "hit": True,
+    try:
+        spec_id = relations.neighbors(conn, task_id, "implements", "out")[0]
+        source_root = job_result.get("source_root") or _default_source_root()
+        worktree = job_result["worktree"]
+        _stage_review_agents(source_root, worktree)
+        headless.run_claude_headless(
+            _review_prompt(source_root, spec_id),
+            cwd=worktree,
+            timeout=1800,
+            mcp_config=job_result.get("mcp_config"),
+        )
+        return _verdict_from_graph(conn, spec_id)
+    except Exception:  # noqa: BLE001 - never merge unreviewed code; never raise
+        return {"verdict": "NEEDS_FIXING", "reviewer": "code-reviewer",
+                "hit": True, "calibrate": False}
+
+
+def _verdict_from_graph(conn, spec_id: str) -> dict:
+    """Derive a review verdict from the graph: any open Critical for this spec
+    means NEEDS_FIXING, else CLEAN.
+
+    Keys off parent_id (NOT scope): both spec-checker and code-reviewer log
+    findings with parent_id=<spec_id>, and spec.scope is frequently None (which
+    would collide across every scope-less spec). query_graph has no parent_id
+    filter, so this is a direct SELECT. calibrate=False: at review time there is
+    no ground truth for whether the verdict is correct, so it must not bias
+    per-role calibration.
+    """
+    open_criticals = conn.execute(
+        "SELECT COUNT(*) FROM finding "
+        "WHERE parent_id=? AND severity='Critical' AND status='open'",
+        (spec_id,),
+    ).fetchone()[0]
+    verdict = "NEEDS_FIXING" if open_criticals else "CLEAN"
+    return {"verdict": verdict, "reviewer": "code-reviewer", "hit": True,
             "calibrate": False}
+
+
+def _build_builder_prompt(conn, task_id: str) -> str:
+    """Assemble a builder-role prompt from the Task body + parent Spec criteria.
+
+    Pure (single-threaded; reads conn). tick() calls this BEFORE dispatch and
+    passes the result into the job dict, so the thread-run _real_launch never
+    touches the sqlite connection. Embedded guidance mirrors agents/builder.md,
+    kept concise.
+    """
+    task = nodes.get_node(conn, task_id)
+    spec_ids = relations.neighbors(conn, task_id, "implements", "out")
+    spec = nodes.get_node(conn, spec_ids[0]) if spec_ids else None
+
+    criteria = []
+    if spec and spec.get("criteria_json"):
+        try:
+            criteria = json.loads(spec["criteria_json"])
+        except (TypeError, ValueError):
+            criteria = []
+    if not isinstance(criteria, list):
+        criteria = []
+    criteria_lines = "\n".join(
+        f"  {i}. {c.get('text', '')} (verify: {c.get('verify', '')})"
+        for i, c in enumerate(c for c in criteria if isinstance(c, dict))
+    ) or "  (none)"
+
+    spec_id = spec["id"] if spec else "(none)"
+    return (
+        "You are a builder agent implementing one task inside a git worktree.\n"
+        f"Task id: {task_id}\n"
+        f"Spec id: {spec_id}\n\n"
+        "## Task\n"
+        f"{task['body']}\n\n"
+        "## Acceptance criteria (from the parent spec)\n"
+        f"{criteria_lines}\n\n"
+        "## Instructions\n"
+        "- Implement the task in the CURRENT worktree directory.\n"
+        "- Self-verify your work against each acceptance criterion above.\n"
+        "- Commit your work with a descriptive message. Do NOT push.\n"
+        "- Stop after committing.\n"
+    )
 
 
 # --- retry cap (CriticalLoop-backed) ---------------------------------------
@@ -198,6 +320,8 @@ def tick(
     review_fn=_real_review,
     integration_branch: str | None = None,
     current_branch_fn=_real_current_branch,
+    db_path: str | Path | None = None,
+    source_root: str | None = None,
 ) -> dict:
     result = {
         "weeded": [],
@@ -227,6 +351,7 @@ def tick(
     # 4. Claim + mark in_progress + build jobs.
     claim_ids: dict[str, str] = {}
     branches: dict[str, str] = {}
+    worktrees: dict[str, str] = {}
     jobs: list[dict] = []
     for c in batch:
         tid = c["task_id"]
@@ -249,14 +374,30 @@ def tick(
             wt, branch = worktree_factory(repo, tid)
             claims.attach_worktree(conn, cid, wt, branch)
             nodes.update_node(conn, tid, status="in_progress")
+            prompt = _build_builder_prompt(conn, tid)
         except Exception as e:  # noqa: BLE001 - setup failure must never propagate
             _handle_failure(conn, tid, cid, f"worktree/setup failure: {e}", result)
             result["failed"].append(tid)
             continue
         claim_ids[tid] = cid
         branches[tid] = branch
-        jobs.append({"task_id": tid, "worktree": wt, "branch": branch})
+        worktrees[tid] = wt
+        jobs.append({"task_id": tid, "worktree": wt, "branch": branch,
+                     "prompt": prompt})
         result["dispatched"].append(tid)
+
+    # 4b. Stage a resolved .mcp.json ONCE per tick so each worker/reviewer can
+    # reach the agentic-graph server. Live path only: gated on db_path (the fast
+    # suite passes none -> no staging, no file side effect) AND on having real
+    # work (no jobs -> nothing to configure, e.g. an idle CLI tick).
+    mcp_config = None
+    if jobs and db_path is not None:
+        # NOTE: in a live run this overwrites <repo>/.mcp.json with a resolved
+        # config (intended: headless workers need a resolved server command).
+        # See the plan's ".mcp.json side effect" note.
+        mcp_config = headless.stage_mcp_config(repo, db_path)
+        for job in jobs:
+            job["mcp_config"] = mcp_config
 
     # 5. Dispatch through the pool (launch_fn never raises - see _real_launch).
     results = headless.Pool(max_workers=pool_size).run(jobs, launch_fn) if jobs else []
@@ -267,6 +408,12 @@ def tick(
         if not r.get("ok"):
             continue
         tid = r["task_id"]
+        # tick() owns the worktree + staged mcp_config; inject them so the real
+        # reviewer can run review-pr in the right directory with graph access,
+        # regardless of what launch_fn put in its result.
+        r["worktree"] = worktrees.get(tid, r.get("worktree"))
+        r["mcp_config"] = mcp_config
+        r["source_root"] = source_root
         rv = review_fn(conn, tid, r)
         reviewer = rv["reviewer"]
         if rv.get("calibrate", True):
@@ -368,11 +515,12 @@ def main() -> int:
                         help="if set, refuse to merge unless HEAD == this branch")
     args = parser.parse_args()
 
-    conn = db.connect(db.resolve_db_path())
+    db_path = db.resolve_db_path()
+    conn = db.connect(db_path)
     try:
         result = tick(
             conn, repo=args.repo, pool_size=args.pool, weed_days=args.weed_days,
-            integration_branch=args.integration_branch,
+            integration_branch=args.integration_branch, db_path=db_path,
         )
     finally:
         conn.close()

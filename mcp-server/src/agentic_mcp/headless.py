@@ -80,7 +80,15 @@ def run_claude_headless(prompt: str, cwd, timeout: int = 900, mcp_config=None) -
     exe = _claude_exe()
     # bypassPermissions required: builder agent must write files and call MCP tools
     # during the exit-gate run; without it claude prompts interactively and hangs.
-    cmd = [exe, "-p", prompt, "--output-format", "json",
+    #
+    # The prompt is fed via STDIN, NOT as a -p argv. On Windows `claude` resolves to
+    # claude.CMD (a batch shim); a MULTI-LINE prompt passed as an argv is truncated
+    # by cmd.exe at the first newline, which also drops every flag positioned after
+    # it (including --output-format json) -> claude runs in default text mode on a
+    # one-line prompt -> json.loads fails. `claude -p` reads the prompt from stdin
+    # when no positional prompt is given, which sidesteps cmd.exe arg parsing and is
+    # newline-safe (verified live: multi-line argv fails, multi-line stdin succeeds).
+    cmd = [exe, "-p", "--output-format", "json",
            "--permission-mode", "bypassPermissions"]
     if mcp_config is not None:
         cmd += ["--mcp-config", str(mcp_config), "--strict-mcp-config"]
@@ -90,11 +98,12 @@ def run_claude_headless(prompt: str, cwd, timeout: int = 900, mcp_config=None) -
     # (including any agentic-mcp server child) so the temp graph.db is released.
     proc = subprocess.Popen(
         cmd,
-        cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        cwd=str(cwd), stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, encoding="utf-8", errors="replace",
     )
     try:
-        out, err = proc.communicate(timeout=timeout)
+        out, err = proc.communicate(input=prompt, timeout=timeout)
     except subprocess.TimeoutExpired:
         _kill_tree(proc.pid)
         try:

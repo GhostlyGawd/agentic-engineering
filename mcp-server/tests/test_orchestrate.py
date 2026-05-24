@@ -10,10 +10,11 @@ _real_worktree seam against a temp `git init` repo (git is available; only
 import json
 import shutil
 import subprocess
+import types
 
 import pytest
 
-from agentic_mcp import calibration, claims, db, nodes, orchestrate, relations
+from agentic_mcp import calibration, claims, db, findings, nodes, orchestrate, relations
 
 
 def _mk_conn(tmp_db_path):
@@ -49,7 +50,8 @@ def fake_merge_ok(repo, branch):
 
 
 def fake_launch_ok(job):
-    return {"task_id": job["task_id"], "ok": True, "sha": "deadbeef"}
+    return {"task_id": job["task_id"], "ok": True, "sha": "deadbeef",
+            "worktree": job["worktree"]}
 
 
 def fake_review_clean(conn, tid, r):
@@ -543,5 +545,373 @@ def test_integration_branch_none_is_default_behavior(tmp_db_path):
             merge_fn=fake_merge_ok, review_fn=fake_review_clean,
         )
         assert t1 in result["merged"]
+    finally:
+        conn.close()
+
+
+# --- _verdict_from_graph -------------------------------------------------
+def test_verdict_from_graph_clean_when_no_open_critical(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        rv = orchestrate._verdict_from_graph(conn, spec)
+        assert rv["verdict"] == "CLEAN"
+        assert rv["reviewer"] == "code-reviewer"
+        assert rv["hit"] is True
+        assert rv["calibrate"] is False
+    finally:
+        conn.close()
+
+
+def test_verdict_from_graph_needs_fixing_when_open_critical(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        findings.log_finding(conn, parent_id=spec, severity="Critical",
+                             body="criterion 0 failed")
+        rv = orchestrate._verdict_from_graph(conn, spec)
+        assert rv["verdict"] == "NEEDS_FIXING"
+    finally:
+        conn.close()
+
+
+def test_verdict_from_graph_ignores_resolved_critical(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        fid = findings.log_finding(conn, parent_id=spec, severity="Critical",
+                                   body="was failing")
+        nodes.update_node(conn, fid, status="resolved")
+        rv = orchestrate._verdict_from_graph(conn, spec)
+        assert rv["verdict"] == "CLEAN"
+    finally:
+        conn.close()
+
+
+def test_verdict_from_graph_ignores_other_specs_critical(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec_a = _dispatched_spec(conn)
+        spec_b = _dispatched_spec(conn)
+        findings.log_finding(conn, parent_id=spec_b, severity="Critical",
+                             body="b is broken")
+        rv = orchestrate._verdict_from_graph(conn, spec_a)
+        assert rv["verdict"] == "CLEAN"
+    finally:
+        conn.close()
+
+
+def test_verdict_from_graph_ignores_open_important(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        findings.log_finding(conn, parent_id=spec, severity="Important",
+                             body="non-blocking nit")
+        rv = orchestrate._verdict_from_graph(conn, spec)
+        assert rv["verdict"] == "CLEAN"
+    finally:
+        conn.close()
+
+
+# --- _build_builder_prompt -----------------------------------------------
+def _spec_with_criteria(conn, criteria):
+    return nodes.create_node(
+        conn, "Spec", status="dispatched", owner="t", body="spec body",
+        criteria_json=json.dumps(criteria),
+        feedback_loop="open a retro on failure",
+    )
+
+
+def test_build_builder_prompt_contains_task_body_and_criteria(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _spec_with_criteria(conn, [
+            {"text": "alpha criterion holds", "verify": "pytest a"},
+            {"text": "beta criterion holds", "verify": "pytest b"},
+        ])
+        tid = nodes.create_node(conn, "Task", status="pending", owner="t",
+                                body="DO THE ALPHA THING", tags=json.dumps(["src/a/*"]))
+        relations.link_nodes(conn, tid, spec, "implements")
+
+        prompt = orchestrate._build_builder_prompt(conn, tid)
+
+        assert "DO THE ALPHA THING" in prompt
+        assert "alpha criterion holds" in prompt
+        assert "beta criterion holds" in prompt
+        assert tid in prompt
+        assert spec in prompt
+    finally:
+        conn.close()
+
+
+def test_build_builder_prompt_handles_missing_spec(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        tid = nodes.create_node(conn, "Task", status="pending", owner="t",
+                                body="ORPHAN TASK", tags=json.dumps(["src/a/*"]))
+        # No implements edge.
+        prompt = orchestrate._build_builder_prompt(conn, tid)
+        assert "ORPHAN TASK" in prompt
+        assert "(none)" in prompt
+    finally:
+        conn.close()
+
+
+def test_build_builder_prompt_tolerates_malformed_criteria(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        # criteria_json is valid JSON but the wrong shape (not a list of dicts).
+        spec = _spec_with_criteria(conn, ["not a dict"])
+        tid = nodes.create_node(conn, "Task", status="pending", owner="t",
+                                body="ROBUST TASK", tags=json.dumps(["src/a/*"]))
+        relations.link_nodes(conn, tid, spec, "implements")
+        prompt = orchestrate._build_builder_prompt(conn, tid)  # must not raise
+        assert "ROBUST TASK" in prompt
+        assert "(none)" in prompt  # no valid criteria -> placeholder
+    finally:
+        conn.close()
+
+
+# --- _real_launch (claude + git monkeypatched) ---------------------------
+def test_real_launch_runs_prompt_and_returns_worktree(monkeypatch):
+    calls = {}
+
+    def fake_run(prompt, cwd, timeout=900, mcp_config=None):
+        calls["prompt"] = prompt
+        calls["cwd"] = cwd
+        calls["mcp_config"] = mcp_config
+        return {"result": "built"}
+
+    monkeypatch.setattr(orchestrate.headless, "run_claude_headless", fake_run)
+    monkeypatch.setattr(orchestrate, "_git",
+                        lambda args: types.SimpleNamespace(stdout="abc123\n"))
+
+    job = {"task_id": "t1", "worktree": "/wt/t1", "branch": "orch/t1",
+           "prompt": "BUILD THIS", "mcp_config": "/repo/.mcp.json"}
+    out = orchestrate._real_launch(job)
+
+    assert out == {"task_id": "t1", "ok": True, "sha": "abc123",
+                   "worktree": "/wt/t1"}
+    assert calls["prompt"] == "BUILD THIS"
+    assert calls["cwd"] == "/wt/t1"
+    assert calls["mcp_config"] == "/repo/.mcp.json"
+
+
+def test_real_launch_folds_exception_into_error(monkeypatch):
+    def boom(prompt, cwd, timeout=900, mcp_config=None):
+        raise RuntimeError("claude exploded")
+
+    monkeypatch.setattr(orchestrate.headless, "run_claude_headless", boom)
+    job = {"task_id": "t1", "worktree": "/wt/t1", "branch": "orch/t1",
+           "prompt": "BUILD THIS", "mcp_config": None}
+    out = orchestrate._real_launch(job)
+    assert out["task_id"] == "t1"
+    assert out["ok"] is False
+    assert "claude exploded" in out["error"]
+
+
+# --- _real_review (claude monkeypatched; stages agents + inlines body) -----
+def _make_source_root(tmp_path):
+    """A tmp 'repo root' with commands/review-pr.md ($1 token) + 4 agent stubs."""
+    src = tmp_path / "src_root"
+    (src / "commands").mkdir(parents=True)
+    (src / "agents").mkdir(parents=True)
+    (src / "commands" / "review-pr.md").write_text(
+        "---\ndescription: review\nargument-hint: \"[spec_id]\"\n---\n"
+        "Review the spec $1 / $ARGUMENTS. Dispatch spec-checker then code-reviewer.\n",
+        encoding="utf-8",
+    )
+    for name in ("spec-checker", "code-reviewer", "contrarian", "builder"):
+        (src / "agents" / f"{name}.md").write_text(
+            f"---\nname: {name}\n---\nYou are {name}.\n", encoding="utf-8")
+    return src
+
+
+def test_real_review_clean_stages_agents_and_inlines_body(tmp_path, tmp_db_path, monkeypatch):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        src = _make_source_root(tmp_path)
+        wt = tmp_path / "wt"
+        wt.mkdir()
+        seen = {}
+
+        def fake_run(prompt, cwd, timeout=900, mcp_config=None):
+            seen["prompt"] = prompt
+            seen["cwd"] = cwd
+            seen["timeout"] = timeout
+            seen["mcp_config"] = mcp_config
+            return {"result": "reviewed"}
+
+        monkeypatch.setattr(orchestrate.headless, "run_claude_headless", fake_run)
+        rv = orchestrate._real_review(
+            conn, t1, {"worktree": str(wt), "mcp_config": "cfg.json",
+                       "source_root": str(src)})
+
+        assert rv["verdict"] == "CLEAN"
+        assert rv["calibrate"] is False
+        # agents staged into the worktree
+        staged = wt / ".claude" / "agents"
+        for name in ("spec-checker", "code-reviewer", "contrarian", "builder"):
+            assert (staged / f"{name}.md").exists(), f"{name} not staged"
+        # prompt is the inlined body with the spec id substituted, NOT a slash command
+        assert spec in seen["prompt"]
+        assert "/agentic:review-pr" not in seen["prompt"]
+        assert "spec-checker" in seen["prompt"]  # body text present
+        assert "$1" not in seen["prompt"] and "$ARGUMENTS" not in seen["prompt"]
+        assert seen["cwd"] == str(wt)
+        assert seen["timeout"] == 1800
+        assert seen["mcp_config"] == "cfg.json"
+    finally:
+        conn.close()
+
+
+def test_real_review_needs_fixing_when_open_critical(tmp_path, tmp_db_path, monkeypatch):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        findings.log_finding(conn, parent_id=spec, severity="Critical", body="boom")
+        src = _make_source_root(tmp_path)
+        wt = tmp_path / "wt"; wt.mkdir()
+        monkeypatch.setattr(orchestrate.headless, "run_claude_headless",
+                            lambda *a, **k: {"result": "reviewed"})
+        rv = orchestrate._real_review(
+            conn, t1, {"worktree": str(wt), "mcp_config": None, "source_root": str(src)})
+        assert rv["verdict"] == "NEEDS_FIXING"
+    finally:
+        conn.close()
+
+
+def test_real_review_needs_fixing_on_claude_failure(tmp_path, tmp_db_path, monkeypatch):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        src = _make_source_root(tmp_path)
+        wt = tmp_path / "wt"; wt.mkdir()
+
+        def boom(*a, **k):
+            raise RuntimeError("review timed out")
+
+        monkeypatch.setattr(orchestrate.headless, "run_claude_headless", boom)
+        rv = orchestrate._real_review(
+            conn, t1, {"worktree": str(wt), "mcp_config": None, "source_root": str(src)})
+        assert rv["verdict"] == "NEEDS_FIXING"
+    finally:
+        conn.close()
+
+
+def test_real_review_needs_fixing_when_task_has_no_spec(tmp_path, tmp_db_path, monkeypatch):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        t1 = nodes.create_node(conn, "Task", status="pending", owner="t",
+                               body="orphan", tags=json.dumps(["src/a/*"]))
+        src = _make_source_root(tmp_path)
+        wt = tmp_path / "wt"; wt.mkdir()
+        monkeypatch.setattr(orchestrate.headless, "run_claude_headless",
+                            lambda *a, **k: {"result": "reviewed"})
+        rv = orchestrate._real_review(
+            conn, t1, {"worktree": str(wt), "mcp_config": None, "source_root": str(src)})
+        assert rv["verdict"] == "NEEDS_FIXING"
+    finally:
+        conn.close()
+
+
+# --- tick() wiring: prompt assembly + mcp staging ------------------------
+def test_tick_assembles_prompt_into_job(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        captured = {}
+
+        def capture_launch(job):
+            captured[job["task_id"]] = job
+            return {"task_id": job["task_id"], "ok": True, "sha": "x",
+                    "worktree": job["worktree"]}
+
+        orchestrate.tick(
+            conn, launch_fn=capture_launch, worktree_factory=fake_worktree,
+            merge_fn=fake_merge_ok, review_fn=fake_review_clean,
+        )
+        job = captured[t1]
+        assert "prompt" in job
+        assert "task" in job["prompt"]  # body of _task() is "task"
+        # No db_path -> no staging -> mcp_config is None (or absent).
+        assert job.get("mcp_config") is None
+    finally:
+        conn.close()
+
+
+def test_tick_stages_mcp_config_when_db_path_set(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    db_path = tmp_path / "graph.db"
+    db.init_db(db_path)
+    conn = db.connect(db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        captured = {}
+
+        def capture_launch(job):
+            captured[job["task_id"]] = job
+            return {"task_id": job["task_id"], "ok": True, "sha": "x",
+                    "worktree": job["worktree"]}
+
+        orchestrate.tick(
+            conn, repo=str(repo), db_path=db_path,
+            launch_fn=capture_launch, worktree_factory=fake_worktree,
+            merge_fn=fake_merge_ok, review_fn=fake_review_clean,
+        )
+        assert (repo / ".mcp.json").exists()
+        assert captured[t1]["mcp_config"] == repo / ".mcp.json"
+    finally:
+        conn.close()
+
+
+def test_tick_no_mcp_stage_when_no_jobs(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    db_path = tmp_path / "graph.db"
+    db.init_db(db_path)
+    conn = db.connect(db_path)
+    try:
+        # Empty graph: no tasks -> no jobs -> must NOT write .mcp.json.
+        orchestrate.tick(
+            conn, repo=str(repo), db_path=db_path,
+            launch_fn=fake_launch_ok, worktree_factory=fake_worktree,
+            merge_fn=fake_merge_ok, review_fn=fake_review_clean,
+        )
+        assert not (repo / ".mcp.json").exists()
+    finally:
+        conn.close()
+
+
+def test_tick_enriches_review_input_with_worktree_and_mcp(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    db_path = tmp_path / "graph.db"
+    db.init_db(db_path)
+    conn = db.connect(db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        seen = {}
+
+        def review_capture(conn_, tid, job_result):
+            seen[tid] = dict(job_result)
+            return {"verdict": "CLEAN", "reviewer": "code-reviewer",
+                    "hit": True, "calibrate": False}
+
+        orchestrate.tick(
+            conn, repo=str(repo), db_path=db_path,
+            launch_fn=fake_launch_ok, worktree_factory=fake_worktree,
+            merge_fn=fake_merge_ok, review_fn=review_capture,
+        )
+        assert seen[t1]["worktree"] == f"/wt/{t1}"
+        assert seen[t1]["mcp_config"] == repo / ".mcp.json"
     finally:
         conn.close()
