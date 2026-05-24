@@ -8,9 +8,32 @@
 
 **Tech Stack:** Python 3.12, SQLite (`agentic_mcp` package), the headless `claude` CLI wrapper (`headless.py`), pytest (`-m "not llm"` fast suite vs `-m llm` live gate), git worktrees.
 
-**Spec:** `docs/superpowers/specs/2026-05-23-headless-build-review-loop-design.md` (approved).
+**Spec:** `docs/superpowers/specs/2026-05-23-headless-build-review-loop-design.md` (approved; REVISED 2026-05-24).
 
 ---
+
+## Revision 2026-05-24 (post-live-e2e) - READ FIRST
+
+The first live `llm` e2e run exposed two wrong assumptions invisible to the fast
+suite. Status of the original Tasks 1-6 and the new work:
+
+- **Tasks 1, 2, 3, 5: DONE and correct** (`_verdict_from_graph`, `_build_builder_prompt`,
+  `_real_launch` rewrite, `tick()` wiring). Unchanged by this revision.
+- **Task A (NEW, DONE): headless prompt via stdin.** `headless.run_claude_headless`
+  now feeds the prompt over STDIN, not as a `-p` argv. A multi-line prompt passed
+  as an argv to the Windows `claude.CMD` shim is truncated by `cmd.exe` at the first
+  newline (dropping `--output-format json` too) -> non-JSON stdout -> build fails.
+  Fixed + unit-tested (`test_run_claude_headless_passes_prompt_via_stdin`) +
+  live-validated (build half now builds->commits->merges). Commit on this branch.
+- **Task 4 (_real_review): SUPERSEDED.** The original "run `claude -p
+  '/agentic:review-pr <spec_id>'`" cannot work - headless `-p` has NO custom slash
+  commands (confirmed live: "Unknown command", and in the CC docs). The `_real_review`
+  body and its 4 fast unit tests still stand for the verdict/error/never-raise
+  behavior, but the COMMAND INVOCATION is replaced by Task B below.
+- **Task B (NEW, TODO): inline-body + staged-agents review.** See revised Task 4
+  section below.
+- **Task 6 (e2e): UPDATED** for the new review path (stage agents; criterion-satisfied
+  is the load-bearing assertion). The build-half assertions already pass live.
 
 ## Context an implementer must know first
 
@@ -387,6 +410,12 @@ git commit -m "feat(orchestrate): _real_launch runs assembled prompt, returns wo
 ---
 
 ### Task 4: Rewrite `_real_review` to run review-pr headless + derive verdict
+
+> SUPERSEDED 2026-05-24 by Task B below. The verdict-derivation, error->NEEDS_FIXING,
+> and never-raise behavior described here are correct and were implemented + tested.
+> But the COMMAND INVOCATION (`claude -p "/agentic:review-pr <spec_id>"`) is
+> infeasible (headless has no custom slash commands). Task B replaces the invocation
+> with the inline-body + staged-agents approach. Read Task B for the current design.
 
 **Goal:** `_real_review` resolves the task's spec, runs `/agentic:review-pr <spec_id>` headless in the worktree, then derives the verdict from the graph via `_verdict_from_graph`. ANY failure (no spec, claude crash/timeout, query error) returns NEEDS_FIXING — never merges unreviewed code, never raises.
 
@@ -929,6 +958,89 @@ If it fails, debug against ACTUAL state (read the worktree, read the `finding` r
 git add mcp-server/tests/test_headless_loop_e2e.py
 git commit -m "test(e2e): live headless build+review+merge closed-loop (llm-marked)"
 ```
+
+> REVISED 2026-05-24: Task 6's e2e must now ALSO exercise the staged-agents review
+> path (Task B). The build-half assertions (dispatched/merged/file-exists) already
+> pass live; the criterion-satisfied assertion is load-bearing (it proves the
+> staged spec-checker actually ran). After Task B lands, re-run the live e2e to
+> confirm the full loop green.
+
+---
+
+### Task A: headless prompt via stdin (NEW 2026-05-24 - DONE)
+
+**Goal:** `headless.run_claude_headless` delivers the prompt over STDIN, not as a `-p` argv, so multi-line prompts survive the Windows `claude.CMD` shim.
+
+**Status:** DONE on this branch (commit `fix(headless): feed prompt via stdin ...`). Recorded here so the plan reflects reality.
+
+**What changed:**
+- `cmd` no longer contains the prompt; it is `[exe, "-p", "--output-format", "json", "--permission-mode", "bypassPermissions", (+ mcp flags)]`.
+- `Popen(..., stdin=subprocess.PIPE, ...)`; `proc.communicate(input=prompt, timeout=timeout)`.
+- Fast unit test `test_run_claude_headless_passes_prompt_via_stdin` (monkeypatched `Popen`) asserts the prompt is NOT an argv element and arrives as stdin input, and that `--output-format json` + mcp flags survive.
+
+**Why:** a multi-line argv to `claude.CMD` is truncated by `cmd.exe` at the first newline, also dropping trailing flags -> claude runs in default text mode -> `json.loads` fails. Verified live (multi-line argv fails; multi-line stdin succeeds).
+
+---
+
+### Task B: review via inlined `review-pr` body + staged agents (NEW 2026-05-24 - TODO)
+
+**Goal:** Make `_real_review` run the real four-role review loop headlessly WITHOUT a slash command: stage the four agent files into the worktree's `.claude/agents/`, then run the inlined `commands/review-pr.md` body (spec id substituted) as the prompt. Verdict still from `_verdict_from_graph`.
+
+**Files:**
+- Modify: `mcp-server/src/agentic_mcp/orchestrate.py` (`_real_review`; add a small staging helper; thread a `source_root` for the command/agent files)
+- Test: `mcp-server/tests/test_orchestrate.py` (fast, claude monkeypatched)
+
+**Background facts (from live + Claude Code docs):**
+- Headless `claude -p` supports NO custom slash commands -> cannot invoke `/agentic:review-pr`.
+- Headless `claude -p` DOES discover project-level `<cwd>/.claude/agents/*.md` (by `name:` frontmatter), so the Task tool can dispatch them. No flag needed.
+- `commands/review-pr.md` is just an instruction prompt referencing `$1`/`$ARGUMENTS` for the spec id; inlining its body (with the id substituted) reproduces the loop engine.
+- Source files live at the agentic repo root: `agents/{spec-checker,code-reviewer,contrarian,builder}.md` and `commands/review-pr.md`. Thread a `source_root` into `tick()`/`_real_review` (default: derive from the package location / repo root). For the e2e, the source_root is the repo under test.
+
+**Acceptance Criteria:**
+- [ ] `_real_review` stages the four agent files into `<worktree>/.claude/agents/` before running the review (creates the dir; copies the files).
+- [ ] `_real_review` reads `commands/review-pr.md`, substitutes the spec id for `$1` and `$ARGUMENTS`, and passes the resulting body as the prompt to `run_claude_headless(body, cwd=<worktree>, mcp_config=<staged>, timeout=1800)`.
+- [ ] Verdict still derived via `_verdict_from_graph(conn, spec_id)`; ANY exception (missing source files, claude crash/timeout, query error) -> NEEDS_FIXING; never raises.
+- [ ] Fast unit tests (claude monkeypatched) assert: (a) the agent files are staged into `<worktree>/.claude/agents/`; (b) the prompt passed to `run_claude_headless` contains the review-pr body text with the spec id substituted and does NOT contain a literal `/agentic:review-pr`; (c) verdict CLEAN/NEEDS_FIXING per graph; (d) error -> NEEDS_FIXING.
+- [ ] Existing `_real_review` fast tests updated to the new signature/behavior (they monkeypatch `run_claude_headless`, so they keep working; add the staging-dir assertions).
+
+**Steps (TDD):**
+
+- [ ] **Step 1: Write/adjust failing fast tests.** Extend `tests/test_orchestrate.py`'s `_real_review` tests: provide a `source_root` (a tmp dir containing `commands/review-pr.md` with a `$1` token and `agents/*.md` stubs), monkeypatch `run_claude_headless` to capture the prompt + cwd, and assert: agents staged into `<worktree>/.claude/agents/`; captured prompt contains the substituted spec id and the command body (not a slash command); CLEAN/NEEDS_FIXING from seeded findings; exception -> NEEDS_FIXING. Run -> expect FAIL.
+
+- [ ] **Step 2: Implement.** In `orchestrate.py`:
+  - Add `_stage_review_agents(source_root, worktree)`: `mkdir <worktree>/.claude/agents`; copy `source_root/agents/{spec-checker,code-reviewer,contrarian,builder}.md` into it.
+  - Add `_review_prompt(source_root, spec_id)`: read `source_root/commands/review-pr.md`, `.replace("$ARGUMENTS", spec_id).replace("$1", spec_id)`, return the body.
+  - Rewrite `_real_review(conn, task_id, job_result)`:
+    ```python
+    try:
+        spec_id = relations.neighbors(conn, task_id, "implements", "out")[0]
+        src = job_result.get("source_root") or _default_source_root()
+        _stage_review_agents(src, job_result["worktree"])
+        headless.run_claude_headless(
+            _review_prompt(src, spec_id),
+            cwd=job_result["worktree"],
+            timeout=1800,
+            mcp_config=job_result.get("mcp_config"),
+        )
+        return _verdict_from_graph(conn, spec_id)
+    except Exception:  # noqa: BLE001 - never merge unreviewed code; never raise
+        return {"verdict": "NEEDS_FIXING", "reviewer": "code-reviewer",
+                "hit": True, "calibrate": False}
+    ```
+  - `_default_source_root()`: the repo root that ships `commands/`+`agents/` (derive from the package path, e.g. parents of `agentic_mcp.__file__`, or accept via `tick(..., source_root=...)`). Thread `source_root` from `tick()` into `job_result` (single-threaded review phase, like `mcp_config`/`worktree`).
+  - `tick()`: inject `r["source_root"] = source_root` alongside `r["worktree"]`/`r["mcp_config"]` before `review_fn`; add `source_root=None` param (default `_default_source_root()`).
+
+- [ ] **Step 3: Run fast tests + full fast suite.** `pytest -k real_review -v`, then `pytest -m "not llm" -q` (all green).
+
+- [ ] **Step 4: Update Task 6 e2e** to pass `source_root` = the repo under test (which must contain `commands/review-pr.md` + `agents/*.md`; the e2e copies them in from the real repo, or points source_root at the real repo root). Re-run the live e2e -> expect the criterion marked satisfied + merge.
+
+- [ ] **Step 5: Commit.**
+```bash
+git add mcp-server/src/agentic_mcp/orchestrate.py mcp-server/tests/test_orchestrate.py
+git commit -m "feat(orchestrate): _real_review stages agents + inlines review-pr body (headless has no slash commands)"
+```
+
+**Open question for the e2e (resolve during Task 6 update):** the synthetic temp repo has no `commands/`+`agents/`. Either (a) point `source_root` at the real agentic repo root (the agents are repo-relative and self-contained), or (b) copy `commands/review-pr.md`+`agents/*.md` into the temp repo. Prefer (a) if the agent prompts don't assume repo-specific paths; else (b).
 
 ---
 
