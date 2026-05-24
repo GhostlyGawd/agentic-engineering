@@ -13,8 +13,9 @@ def test_phase2_tools_listed():
     tools = asyncio.run(server.list_tools())
     names = {t.name for t in tools}
     assert {"claim_scope", "release_claim", "detect_overlap", "flag_stale",
-            "record_outcome", "get_calibration", "adjust_trust"} <= names
-    assert len(names) == 25
+            "record_outcome", "get_calibration", "adjust_trust",
+            "triage_pattern"} <= names
+    assert len(names) == 26
 
 
 def test_claim_scope_and_overlap_roundtrip(tmp_path, monkeypatch):
@@ -147,3 +148,25 @@ async def test_phase1_tools_via_stdio(tmp_path):
                 "caused_by_finding_id": fid,
             })
             assert json.loads(retro.content[0].text)["id"]
+
+
+def test_triage_pattern_tool_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTIC_DB_PATH", str(tmp_path / "graph.db"))
+    created = asyncio.run(server.call_tool(
+        "create_node", {"type": "Pattern", "status": "open", "owner": "t", "body": "p"}))
+    pid = json.loads(created[0].text)["id"]
+    out = asyncio.run(server.call_tool(
+        "triage_pattern", {"pattern_id": pid, "disposition": "confirmed"}))
+    assert json.loads(out[0].text) == {"ok": True}
+    got = asyncio.run(server.call_tool("get_node", {"id": pid}))
+    assert json.loads(got[0].text)["status"] == "confirmed"
+
+
+def test_triage_pattern_tool_bad_disposition_errors(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTIC_DB_PATH", str(tmp_path / "graph.db"))
+    created = asyncio.run(server.call_tool(
+        "create_node", {"type": "Pattern", "status": "open", "owner": "t", "body": "p"}))
+    pid = json.loads(created[0].text)["id"]
+    out = asyncio.run(server.call_tool(
+        "triage_pattern", {"pattern_id": pid, "disposition": "nope"}))
+    assert "error" in json.loads(out[0].text)
