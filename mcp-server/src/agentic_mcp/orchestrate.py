@@ -285,12 +285,17 @@ def tick(
     # kept here for robustness/correctness if that invariant ever changes.
     # Integration-branch guard (opt-in). If HEAD is not the integration branch,
     # refuse to merge anything into the wrong branch: escalate every CLEAN task
-    # (claims stay held for a later correctly-branched tick) and skip merging.
-    # tick() still completes - weeding/dispatch/review already ran.
+    # and skip merging. Claims stay held and the tasks remain in_progress,
+    # pending external recovery - same as the merge-conflict escalation path
+    # (no automatic cross-tick retry, since ready_tasks only re-selects
+    # pending/ready tasks). tick() still completes - weeding/dispatch/review
+    # already ran.
     if integration_branch is not None and clean_ids:
         actual = current_branch_fn(repo)
         if actual != integration_branch:
             for tid in clean_ids:
+                # Shares the merge-conflict escalation shape {task_id, error};
+                # the retry-cap escalation site additionally carries `iterations`.
                 result["escalations"].append({
                     "task_id": tid,
                     "error": (f"HEAD on {actual}, expected integration branch "
