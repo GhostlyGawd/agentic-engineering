@@ -13,7 +13,7 @@ import subprocess
 
 import pytest
 
-from agentic_mcp import calibration, claims, db, nodes, orchestrate, relations
+from agentic_mcp import calibration, claims, db, findings, nodes, orchestrate, relations
 
 
 def _mk_conn(tmp_db_path):
@@ -543,5 +543,69 @@ def test_integration_branch_none_is_default_behavior(tmp_db_path):
             merge_fn=fake_merge_ok, review_fn=fake_review_clean,
         )
         assert t1 in result["merged"]
+    finally:
+        conn.close()
+
+
+# --- _verdict_from_graph -------------------------------------------------
+def test_verdict_from_graph_clean_when_no_open_critical(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        rv = orchestrate._verdict_from_graph(conn, spec)
+        assert rv["verdict"] == "CLEAN"
+        assert rv["reviewer"] == "code-reviewer"
+        assert rv["hit"] is True
+        assert rv["calibrate"] is False
+    finally:
+        conn.close()
+
+
+def test_verdict_from_graph_needs_fixing_when_open_critical(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        findings.log_finding(conn, parent_id=spec, severity="Critical",
+                             body="criterion 0 failed")
+        rv = orchestrate._verdict_from_graph(conn, spec)
+        assert rv["verdict"] == "NEEDS_FIXING"
+    finally:
+        conn.close()
+
+
+def test_verdict_from_graph_ignores_resolved_critical(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        fid = findings.log_finding(conn, parent_id=spec, severity="Critical",
+                                   body="was failing")
+        nodes.update_node(conn, fid, status="resolved")
+        rv = orchestrate._verdict_from_graph(conn, spec)
+        assert rv["verdict"] == "CLEAN"
+    finally:
+        conn.close()
+
+
+def test_verdict_from_graph_ignores_other_specs_critical(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec_a = _dispatched_spec(conn)
+        spec_b = _dispatched_spec(conn)
+        findings.log_finding(conn, parent_id=spec_b, severity="Critical",
+                             body="b is broken")
+        rv = orchestrate._verdict_from_graph(conn, spec_a)
+        assert rv["verdict"] == "CLEAN"
+    finally:
+        conn.close()
+
+
+def test_verdict_from_graph_ignores_open_important(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        findings.log_finding(conn, parent_id=spec, severity="Important",
+                             body="non-blocking nit")
+        rv = orchestrate._verdict_from_graph(conn, spec)
+        assert rv["verdict"] == "CLEAN"
     finally:
         conn.close()

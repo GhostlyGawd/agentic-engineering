@@ -136,6 +136,27 @@ def _real_review(conn, task_id: str, job_result: dict) -> dict:
             "calibrate": False}
 
 
+def _verdict_from_graph(conn, spec_id: str) -> dict:
+    """Derive a review verdict from the graph: any open Critical for this spec
+    means NEEDS_FIXING, else CLEAN.
+
+    Keys off parent_id (NOT scope): both spec-checker and code-reviewer log
+    findings with parent_id=<spec_id>, and spec.scope is frequently None (which
+    would collide across every scope-less spec). query_graph has no parent_id
+    filter, so this is a direct SELECT. calibrate=False: at review time there is
+    no ground truth for whether the verdict is correct, so it must not bias
+    per-role calibration.
+    """
+    open_criticals = conn.execute(
+        "SELECT COUNT(*) FROM finding "
+        "WHERE parent_id=? AND severity='Critical' AND status='open'",
+        (spec_id,),
+    ).fetchone()[0]
+    verdict = "NEEDS_FIXING" if open_criticals else "CLEAN"
+    return {"verdict": verdict, "reviewer": "code-reviewer", "hit": True,
+            "calibrate": False}
+
+
 # --- retry cap (CriticalLoop-backed) ---------------------------------------
 def _find_open_dispatch_loop(conn, task_id: str) -> dict | None:
     """The open CriticalLoop tracking this task's dispatch failures, or None.
