@@ -112,3 +112,21 @@ def test_candidate_groups_tolerates_bad_tags(tmp_db_path):
         assert "parent:S-9" in keys
     finally:
         conn.close()
+
+
+def test_candidate_groups_superset_not_covered(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        ev = [_finding(conn, "S-1") for _ in range(3)]
+        # A Pattern covering only 2 of the 3 does NOT cover the 3-node group
+        # (the group is a strict superset of the Pattern's evidence), so the
+        # group must STILL be returned. This distinguishes the correct subset
+        # check (ev <= covered) from a buggy superset/equality check.
+        pat = nodes.create_node(conn, "Pattern", status="open", owner="system",
+                                body="partial")
+        for nid in ev[:2]:
+            relations.link_nodes(conn, pat, nid, "derived-from")
+        keys = {g["key"] for g in patterns.candidate_groups(conn, min_size=3)}
+        assert "parent:S-1" in keys
+    finally:
+        conn.close()
