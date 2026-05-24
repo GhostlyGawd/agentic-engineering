@@ -165,3 +165,111 @@ def test_triage_pattern_rejects_non_pattern(tmp_db_path):
             patterns.triage_pattern(conn, "no-such-id", "confirmed")
     finally:
         conn.close()
+
+
+# --- find_patterns_tick (confirm_fn stubbed; no real claude) --------------
+def _three_findings(conn, parent="S-1"):
+    return [_finding(conn, parent) for _ in range(3)]
+
+
+def test_tick_records_minted_when_agent_mints(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        ev = _three_findings(conn)
+
+        def stub_confirm(conn_, group, *, repo, mcp_config, source_root):
+            pid = nodes.create_node(conn_, "Pattern", status="open",
+                                    owner="pattern-finder", body="real pattern")
+            for nid in group["evidence_ids"]:
+                relations.link_nodes(conn_, pid, nid, "derived-from")
+
+        result = patterns.find_patterns_tick(
+            conn, confirm_fn=stub_confirm, repo=".", db_path=None)
+        assert result["considered"] == 1
+        assert len(result["minted"]) == 1
+        assert result["dismissed"] == []
+        minted = nodes.get_node(conn, result["minted"][0])
+        assert minted["status"] == "open"
+        linked = set(relations.neighbors(conn, result["minted"][0],
+                                         "derived-from", "out"))
+        assert set(ev) <= linked
+    finally:
+        conn.close()
+
+
+def test_tick_tombstones_when_agent_declines(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        ev = _three_findings(conn)
+
+        def stub_decline(conn_, group, *, repo, mcp_config, source_root):
+            return None  # agent ran, judged "not a pattern", minted nothing
+
+        result = patterns.find_patterns_tick(
+            conn, confirm_fn=stub_decline, repo=".", db_path=None)
+        assert result["minted"] == []
+        assert len(result["dismissed"]) == 1
+        tomb = nodes.get_node(conn, result["dismissed"][0])
+        assert tomb["status"] == "dismissed"
+        assert tomb["owner"] == "system"
+        linked = set(relations.neighbors(conn, tomb["id"], "derived-from", "out"))
+        assert set(ev) <= linked
+    finally:
+        conn.close()
+
+
+def test_tick_never_raises_on_confirm_error(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        _three_findings(conn)
+
+        def boom(conn_, group, *, repo, mcp_config, source_root):
+            raise RuntimeError("agent exploded")
+
+        result = patterns.find_patterns_tick(
+            conn, confirm_fn=boom, repo=".", db_path=None)
+        assert result["minted"] == []
+        assert result["dismissed"] == []
+        assert len(result["errors"]) == 1
+        assert "agent exploded" in result["errors"][0]["error"]
+        # No tombstone -> the group is retried next tick.
+        assert conn.execute("SELECT COUNT(*) FROM pattern").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
+def test_tick_no_groups_no_staging(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    db_path = tmp_path / "graph.db"
+    db.init_db(db_path)
+    conn = db.connect(db_path)
+    try:
+        result = patterns.find_patterns_tick(
+            conn, confirm_fn=lambda *a, **k: None,
+            repo=str(repo), db_path=db_path)
+        assert result["considered"] == 0
+        assert not (repo / ".mcp.json").exists()
+    finally:
+        conn.close()
+
+
+def test_tick_stages_mcp_config_when_db_path_set(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    db_path = tmp_path / "graph.db"
+    db.init_db(db_path)
+    conn = db.connect(db_path)
+    try:
+        _three_findings(conn)
+        seen = {}
+
+        def capture(conn_, group, *, repo, mcp_config, source_root):
+            seen["mcp_config"] = mcp_config  # mint nothing
+
+        patterns.find_patterns_tick(
+            conn, confirm_fn=capture, repo=str(repo), db_path=db_path)
+        assert (repo / ".mcp.json").exists()
+        assert seen["mcp_config"] == repo / ".mcp.json"
+    finally:
+        conn.close()

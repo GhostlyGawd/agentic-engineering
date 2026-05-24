@@ -116,3 +116,112 @@ def triage_pattern(conn, pattern_id: str, disposition: str) -> None:
     if node is None or node["type"] != "Pattern":
         raise ValueError(f"not a Pattern: {pattern_id}")
     nodes.update_node(conn, pattern_id, status=disposition)
+
+
+_PATTERN_AGENT = "pattern-finder"
+
+
+def _default_source_root() -> str:
+    # <repo>/mcp-server/src/agentic_mcp/patterns.py -> parents[3] == repo root,
+    # which ships agents/ + commands/. Overridable via source_root (e.g. the e2e).
+    return str(Path(__file__).resolve().parents[3])
+
+
+def _stage_pattern_agent(source_root: str, repo: str) -> None:
+    """Copy agents/pattern-finder.md into <repo>/.claude/agents/ so a headless
+    `claude -p` run discovers it (headless has no slash commands but DOES discover
+    project-level .claude/agents/*.md). Idempotent overwrite."""
+    src = Path(source_root) / "agents" / f"{_PATTERN_AGENT}.md"
+    dst = Path(repo) / ".claude" / "agents"
+    dst.mkdir(parents=True, exist_ok=True)
+    shutil.copy(src, dst / f"{_PATTERN_AGENT}.md")
+
+
+def _confirm_prompt(conn, group: dict) -> str:
+    lines = []
+    for nid in group["evidence_ids"]:
+        n = nodes.get_node(conn, nid)
+        ntype = n["type"] if n else "?"
+        body = (n["body"] if n else "").strip().replace("\n", " ")
+        lines.append(f"- {nid} [{ntype}]: {body[:300]}")
+    evidence = "\n".join(lines)
+    ids_json = json.dumps(group["evidence_ids"])
+    return (
+        "You are the pattern-finder. Decide whether the evidence below is a\n"
+        "GENUINE recurring pattern (a repeated root cause or theme) or just\n"
+        "coincidence. Reject coincidence.\n\n"
+        f"## Why these were grouped\n{group['reason']}\n\n"
+        f"## Evidence nodes\n{evidence}\n\n"
+        "## If and ONLY if this is a genuine recurring pattern\n"
+        "1. Call the MCP tool create_node with type=\"Pattern\", status=\"open\",\n"
+        "   owner=\"pattern-finder\", body=<one paragraph naming the pattern and\n"
+        "   its hypothesis>, summary=<one line>.\n"
+        "2. For EACH evidence id below, call link_nodes with from_id=<the new\n"
+        "   Pattern id>, to_id=<evidence id>, relation_type=\"derived-from\":\n"
+        f"   {ids_json}\n\n"
+        "If it is NOT a genuine pattern, create no node. Stop when done.\n"
+    )
+
+
+def _real_confirm(conn, group: dict, *, repo, mcp_config, source_root) -> None:
+    """Real confirm seam: stage the pattern-finder agent + run it headless with
+    graph access so IT mints the Pattern. The tick derives the outcome from the
+    graph (never parses prose). Only exercised by the llm-gated e2e; fast tests
+    inject a stub confirm_fn."""
+    _stage_pattern_agent(source_root, repo)
+    headless.run_claude_headless(
+        _confirm_prompt(conn, group), cwd=repo, mcp_config=mcp_config)
+
+
+def _minted_for(conn, group: dict, before_ids: set) -> str | None:
+    """A newly created open Pattern whose derived-from evidence covers this group."""
+    ev = set(group["evidence_ids"])
+    for (pid,) in conn.execute(
+            "SELECT id FROM pattern WHERE status='open'").fetchall():
+        if pid in before_ids:
+            continue
+        linked = set(relations.neighbors(conn, pid, "derived-from", "out"))
+        if ev <= linked:
+            return pid
+    return None
+
+
+def find_patterns_tick(conn, *, scope=None, db_path=None, confirm_fn=_real_confirm,
+                       min_size: int = 3, repo: str = ".",
+                       source_root: str | None = None) -> dict:
+    """Never-raise single-tick driver. Serves /agentic:find-patterns (on demand)
+    and cron/`/loop` (scheduled). Mirrors orchestrate.tick's never-raise contract:
+    per-group failures land in result["errors"]; nothing propagates."""
+    result = {"minted": [], "dismissed": [], "considered": 0, "errors": []}
+    groups = candidate_groups(conn, scope=scope, min_size=min_size)
+    result["considered"] = len(groups)
+    if not groups:
+        return result
+    source_root = source_root or _default_source_root()
+    mcp_config = None
+    if db_path is not None:
+        mcp_config = headless.stage_mcp_config(repo, db_path)
+    for group in groups:
+        try:
+            before = {pid for (pid,) in conn.execute("SELECT id FROM pattern")}
+            confirm_fn(conn, group, repo=repo, mcp_config=mcp_config,
+                       source_root=source_root)
+            minted = _minted_for(conn, group, before)
+            if minted:
+                result["minted"].append(minted)
+            else:
+                tomb = nodes.create_node(
+                    conn, "Pattern", status="dismissed", owner="system",
+                    body=("pattern-finder: candidate group not confirmed as a real "
+                          f"pattern. {group['reason']}. Tombstone to prevent "
+                          "re-evaluation."),
+                    summary="dismissed candidate (system tombstone)",
+                    scope=scope,
+                    tags=json.dumps(["pattern-finder", "tombstone"]),
+                )
+                for nid in group["evidence_ids"]:
+                    relations.link_nodes(conn, tomb, nid, "derived-from")
+                result["dismissed"].append(tomb)
+        except Exception as e:  # noqa: BLE001 - never raise under cron; retry next tick
+            result["errors"].append({"key": group["key"], "error": str(e)})
+    return result
