@@ -206,6 +206,10 @@ def find_patterns_tick(conn, *, scope=None, db_path=None, confirm_fn=_real_confi
             before = {pid for (pid,) in conn.execute("SELECT id FROM pattern")}
             confirm_fn(conn, group, repo=repo, mcp_config=mcp_config,
                        source_root=source_root)
+            # The agent committed any new Pattern via a SEPARATE process/connection.
+            # Drop our connection's implicit transaction/snapshot so this read sees
+            # those committed rows (cheap no-op when nothing is open).
+            conn.commit()
             minted = _minted_for(conn, group, before)
             if minted:
                 result["minted"].append(minted)
