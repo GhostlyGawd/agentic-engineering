@@ -282,6 +282,7 @@ def tick(
     review_fn=_real_review,
     integration_branch: str | None = None,
     current_branch_fn=_real_current_branch,
+    db_path: str | Path | None = None,
 ) -> dict:
     result = {
         "weeded": [],
@@ -311,6 +312,7 @@ def tick(
     # 4. Claim + mark in_progress + build jobs.
     claim_ids: dict[str, str] = {}
     branches: dict[str, str] = {}
+    worktrees: dict[str, str] = {}
     jobs: list[dict] = []
     for c in batch:
         tid = c["task_id"]
@@ -333,14 +335,30 @@ def tick(
             wt, branch = worktree_factory(repo, tid)
             claims.attach_worktree(conn, cid, wt, branch)
             nodes.update_node(conn, tid, status="in_progress")
+            prompt = _build_builder_prompt(conn, tid)
         except Exception as e:  # noqa: BLE001 - setup failure must never propagate
             _handle_failure(conn, tid, cid, f"worktree/setup failure: {e}", result)
             result["failed"].append(tid)
             continue
         claim_ids[tid] = cid
         branches[tid] = branch
-        jobs.append({"task_id": tid, "worktree": wt, "branch": branch})
+        worktrees[tid] = wt
+        jobs.append({"task_id": tid, "worktree": wt, "branch": branch,
+                     "prompt": prompt})
         result["dispatched"].append(tid)
+
+    # 4b. Stage a resolved .mcp.json ONCE per tick so each worker/reviewer can
+    # reach the agentic-graph server. Live path only: gated on db_path (the fast
+    # suite passes none -> no staging, no file side effect) AND on having real
+    # work (no jobs -> nothing to configure, e.g. an idle CLI tick).
+    mcp_config = None
+    if jobs and db_path is not None:
+        # NOTE: in a live run this overwrites <repo>/.mcp.json with a resolved
+        # config (intended: headless workers need a resolved server command).
+        # See the plan's ".mcp.json side effect" note.
+        mcp_config = headless.stage_mcp_config(repo, db_path)
+        for job in jobs:
+            job["mcp_config"] = mcp_config
 
     # 5. Dispatch through the pool (launch_fn never raises - see _real_launch).
     results = headless.Pool(max_workers=pool_size).run(jobs, launch_fn) if jobs else []
@@ -351,6 +369,11 @@ def tick(
         if not r.get("ok"):
             continue
         tid = r["task_id"]
+        # tick() owns the worktree + staged mcp_config; inject them so the real
+        # reviewer can run review-pr in the right directory with graph access,
+        # regardless of what launch_fn put in its result.
+        r["worktree"] = worktrees.get(tid, r.get("worktree"))
+        r["mcp_config"] = mcp_config
         rv = review_fn(conn, tid, r)
         reviewer = rv["reviewer"]
         if rv.get("calibrate", True):
@@ -452,11 +475,12 @@ def main() -> int:
                         help="if set, refuse to merge unless HEAD == this branch")
     args = parser.parse_args()
 
-    conn = db.connect(db.resolve_db_path())
+    db_path = db.resolve_db_path()
+    conn = db.connect(db_path)
     try:
         result = tick(
             conn, repo=args.repo, pool_size=args.pool, weed_days=args.weed_days,
-            integration_branch=args.integration_branch,
+            integration_branch=args.integration_branch, db_path=db_path,
         )
     finally:
         conn.close()

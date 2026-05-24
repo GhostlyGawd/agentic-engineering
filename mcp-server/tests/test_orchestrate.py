@@ -50,7 +50,8 @@ def fake_merge_ok(repo, branch):
 
 
 def fake_launch_ok(job):
-    return {"task_id": job["task_id"], "ok": True, "sha": "deadbeef"}
+    return {"task_id": job["task_id"], "ok": True, "sha": "deadbeef",
+            "worktree": job["worktree"]}
 
 
 def fake_review_clean(conn, tid, r):
@@ -783,5 +784,103 @@ def test_real_review_needs_fixing_when_task_has_no_spec(tmp_db_path, monkeypatch
         rv = orchestrate._real_review(
             conn, t1, {"worktree": "/wt/t1", "mcp_config": None})
         assert rv["verdict"] == "NEEDS_FIXING"
+    finally:
+        conn.close()
+
+
+# --- tick() wiring: prompt assembly + mcp staging ------------------------
+def test_tick_assembles_prompt_into_job(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        captured = {}
+
+        def capture_launch(job):
+            captured[job["task_id"]] = job
+            return {"task_id": job["task_id"], "ok": True, "sha": "x",
+                    "worktree": job["worktree"]}
+
+        orchestrate.tick(
+            conn, launch_fn=capture_launch, worktree_factory=fake_worktree,
+            merge_fn=fake_merge_ok, review_fn=fake_review_clean,
+        )
+        job = captured[t1]
+        assert "prompt" in job
+        assert "task" in job["prompt"]  # body of _task() is "task"
+        # No db_path -> no staging -> mcp_config is None (or absent).
+        assert job.get("mcp_config") is None
+    finally:
+        conn.close()
+
+
+def test_tick_stages_mcp_config_when_db_path_set(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    db_path = tmp_path / "graph.db"
+    db.init_db(db_path)
+    conn = db.connect(db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        captured = {}
+
+        def capture_launch(job):
+            captured[job["task_id"]] = job
+            return {"task_id": job["task_id"], "ok": True, "sha": "x",
+                    "worktree": job["worktree"]}
+
+        orchestrate.tick(
+            conn, repo=str(repo), db_path=db_path,
+            launch_fn=capture_launch, worktree_factory=fake_worktree,
+            merge_fn=fake_merge_ok, review_fn=fake_review_clean,
+        )
+        assert (repo / ".mcp.json").exists()
+        assert captured[t1]["mcp_config"] == repo / ".mcp.json"
+    finally:
+        conn.close()
+
+
+def test_tick_no_mcp_stage_when_no_jobs(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    db_path = tmp_path / "graph.db"
+    db.init_db(db_path)
+    conn = db.connect(db_path)
+    try:
+        # Empty graph: no tasks -> no jobs -> must NOT write .mcp.json.
+        orchestrate.tick(
+            conn, repo=str(repo), db_path=db_path,
+            launch_fn=fake_launch_ok, worktree_factory=fake_worktree,
+            merge_fn=fake_merge_ok, review_fn=fake_review_clean,
+        )
+        assert not (repo / ".mcp.json").exists()
+    finally:
+        conn.close()
+
+
+def test_tick_enriches_review_input_with_worktree_and_mcp(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    db_path = tmp_path / "graph.db"
+    db.init_db(db_path)
+    conn = db.connect(db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        seen = {}
+
+        def review_capture(conn_, tid, job_result):
+            seen[tid] = dict(job_result)
+            return {"verdict": "CLEAN", "reviewer": "code-reviewer",
+                    "hit": True, "calibrate": False}
+
+        orchestrate.tick(
+            conn, repo=str(repo), db_path=db_path,
+            launch_fn=fake_launch_ok, worktree_factory=fake_worktree,
+            merge_fn=fake_merge_ok, review_fn=review_capture,
+        )
+        assert seen[t1]["worktree"] == f"/wt/{t1}"
+        assert seen[t1]["mcp_config"] == repo / ".mcp.json"
     finally:
         conn.close()
