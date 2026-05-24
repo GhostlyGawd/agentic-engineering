@@ -82,9 +82,14 @@ def test_build_review_merge_closed_loop(tmp_path):
     relations.link_nodes(conn, task, spec, "implements")
 
     # --- 4. Run the real tick (all real seams; only db_path injected) -------
+    # The worktree is the synthetic temp repo, but the review agents + review-pr
+    # body come from the REAL repo via source_root (headless has no slash commands;
+    # the agents are staged into the worktree's .claude/agents/).
+    repo_root = Path(__file__).resolve().parents[2]  # <repo>/mcp-server/tests/.. -> repo root (ships commands/ + agents/)
     try:
         result = orchestrate.tick(
             conn, repo=str(repo), pool_size=1, db_path=db_path,
+            source_root=str(repo_root),
         )
     finally:
         # Best-effort: prune only sweeps git's admin entries for worktrees whose
