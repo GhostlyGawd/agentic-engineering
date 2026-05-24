@@ -707,3 +707,81 @@ def test_real_launch_folds_exception_into_error(monkeypatch):
     assert out["task_id"] == "t1"
     assert out["ok"] is False
     assert "claude exploded" in out["error"]
+
+
+# --- _real_review (claude monkeypatched; verdict from graph) --------------
+def test_real_review_clean_when_no_open_critical(tmp_db_path, monkeypatch):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        seen = {}
+
+        def fake_run(prompt, cwd, timeout=900, mcp_config=None):
+            seen["prompt"] = prompt
+            seen["cwd"] = cwd
+            seen["timeout"] = timeout
+            seen["mcp_config"] = mcp_config
+            return {"result": "reviewed"}
+
+        monkeypatch.setattr(orchestrate.headless, "run_claude_headless", fake_run)
+        rv = orchestrate._real_review(
+            conn, t1, {"worktree": "/wt/t1", "mcp_config": "/repo/.mcp.json"})
+
+        assert rv["verdict"] == "CLEAN"
+        assert rv["calibrate"] is False
+        assert seen["cwd"] == "/wt/t1"
+        assert seen["mcp_config"] == "/repo/.mcp.json"
+        assert seen["timeout"] == 1800
+        assert spec in seen["prompt"]
+        assert "review-pr" in seen["prompt"]
+    finally:
+        conn.close()
+
+
+def test_real_review_needs_fixing_when_open_critical(tmp_db_path, monkeypatch):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        findings.log_finding(conn, parent_id=spec, severity="Critical",
+                             body="criterion failed")
+        monkeypatch.setattr(orchestrate.headless, "run_claude_headless",
+                            lambda *a, **k: {"result": "reviewed"})
+        rv = orchestrate._real_review(
+            conn, t1, {"worktree": "/wt/t1", "mcp_config": None})
+        assert rv["verdict"] == "NEEDS_FIXING"
+    finally:
+        conn.close()
+
+
+def test_real_review_needs_fixing_on_claude_failure(tmp_db_path, monkeypatch):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+
+        def boom(*a, **k):
+            raise RuntimeError("review-pr timed out")
+
+        monkeypatch.setattr(orchestrate.headless, "run_claude_headless", boom)
+        rv = orchestrate._real_review(
+            conn, t1, {"worktree": "/wt/t1", "mcp_config": None})
+        assert rv["verdict"] == "NEEDS_FIXING"
+    finally:
+        conn.close()
+
+
+def test_real_review_needs_fixing_when_task_has_no_spec(tmp_db_path, monkeypatch):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        t1 = nodes.create_node(conn, "Task", status="pending", owner="t",
+                               body="orphan", tags=json.dumps(["src/a/*"]))
+        # No implements edge -> neighbors()[0] would IndexError; must be caught.
+        monkeypatch.setattr(orchestrate.headless, "run_claude_headless",
+                            lambda *a, **k: {"result": "reviewed"})
+        rv = orchestrate._real_review(
+            conn, t1, {"worktree": "/wt/t1", "mcp_config": None})
+        assert rv["verdict"] == "NEEDS_FIXING"
+    finally:
+        conn.close()

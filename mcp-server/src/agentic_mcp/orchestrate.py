@@ -126,17 +126,35 @@ def _real_current_branch(repo: str) -> str:
 
 
 def _real_review(conn, task_id: str, job_result: dict) -> dict:
-    """Minimal integration-default reviewer.
+    """Run the real /agentic:review-pr loop headless, then derive the verdict.
 
-    Task 8's e2e overrides this with the real Phase-1 reviewer dispatch (spawn
-    the code-reviewer agent, parse its verdict). Kept thin on purpose so this
-    module composes cleanly without pulling in the review machinery.
+    review-pr IS the full four-role loop engine (spec-checker gate ->
+    code-reviewer + contrarian -> builder loop-fix -> re-loop until clean or
+    diminishing returns). One headless call runs the entire review-and-repair
+    cycle and lands on a terminal state; we then read the graph for the verdict.
+
+    Runs in tick()'s single-threaded review phase, so it MAY use conn. The
+    review phase has NO outer try/except, so this function MUST catch ALL of its
+    own exceptions (spec resolution included) and return NEEDS_FIXING - never
+    merge unreviewed code, never raise. The Phase 2.1 retry cap then terminates
+    a persistently unreviewable task after 3 strikes.
     """
-    # calibrate=False: this stub's hit=True is a placeholder, not a real review
-    # outcome, so it must NOT bias code-reviewer's calibration on every tick.
-    # Real reviewers (Task 8) omit the flag -> calibrate defaults True.
-    return {"verdict": "CLEAN", "reviewer": "code-reviewer", "hit": True,
-            "calibrate": False}
+    try:
+        spec_id = relations.neighbors(conn, task_id, "implements", "out")[0]
+        # review-pr is the full multi-round loop (gate -> reviewers -> builder
+        # loop-fix -> re-loop), so it needs a larger budget than a single builder
+        # turn; a too-tight timeout would burn a retry-cap strike on a healthy
+        # but slow review.
+        headless.run_claude_headless(
+            f"/agentic:review-pr {spec_id}",
+            cwd=job_result["worktree"],
+            timeout=1800,
+            mcp_config=job_result.get("mcp_config"),
+        )
+        return _verdict_from_graph(conn, spec_id)
+    except Exception:  # noqa: BLE001 - never merge unreviewed code; never raise
+        return {"verdict": "NEEDS_FIXING", "reviewer": "code-reviewer",
+                "hit": True, "calibrate": False}
 
 
 def _verdict_from_graph(conn, spec_id: str) -> dict:
