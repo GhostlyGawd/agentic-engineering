@@ -609,3 +609,62 @@ def test_verdict_from_graph_ignores_open_important(tmp_db_path):
         assert rv["verdict"] == "CLEAN"
     finally:
         conn.close()
+
+
+# --- _build_builder_prompt -----------------------------------------------
+def _spec_with_criteria(conn, criteria):
+    return nodes.create_node(
+        conn, "Spec", status="dispatched", owner="t", body="spec body",
+        criteria_json=json.dumps(criteria),
+        feedback_loop="open a retro on failure",
+    )
+
+
+def test_build_builder_prompt_contains_task_body_and_criteria(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _spec_with_criteria(conn, [
+            {"text": "alpha criterion holds", "verify": "pytest a"},
+            {"text": "beta criterion holds", "verify": "pytest b"},
+        ])
+        tid = nodes.create_node(conn, "Task", status="pending", owner="t",
+                                body="DO THE ALPHA THING", tags=json.dumps(["src/a/*"]))
+        relations.link_nodes(conn, tid, spec, "implements")
+
+        prompt = orchestrate._build_builder_prompt(conn, tid)
+
+        assert "DO THE ALPHA THING" in prompt
+        assert "alpha criterion holds" in prompt
+        assert "beta criterion holds" in prompt
+        assert tid in prompt
+        assert spec in prompt
+    finally:
+        conn.close()
+
+
+def test_build_builder_prompt_handles_missing_spec(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        tid = nodes.create_node(conn, "Task", status="pending", owner="t",
+                                body="ORPHAN TASK", tags=json.dumps(["src/a/*"]))
+        # No implements edge.
+        prompt = orchestrate._build_builder_prompt(conn, tid)
+        assert "ORPHAN TASK" in prompt
+        assert "(none)" in prompt
+    finally:
+        conn.close()
+
+
+def test_build_builder_prompt_tolerates_malformed_criteria(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        # criteria_json is valid JSON but the wrong shape (not a list of dicts).
+        spec = _spec_with_criteria(conn, ["not a dict"])
+        tid = nodes.create_node(conn, "Task", status="pending", owner="t",
+                                body="ROBUST TASK", tags=json.dumps(["src/a/*"]))
+        relations.link_nodes(conn, tid, spec, "implements")
+        prompt = orchestrate._build_builder_prompt(conn, tid)  # must not raise
+        assert "ROBUST TASK" in prompt
+        assert "(none)" in prompt  # no valid criteria -> placeholder
+    finally:
+        conn.close()

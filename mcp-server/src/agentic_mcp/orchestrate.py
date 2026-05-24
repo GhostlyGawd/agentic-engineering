@@ -157,6 +157,48 @@ def _verdict_from_graph(conn, spec_id: str) -> dict:
             "calibrate": False}
 
 
+def _build_builder_prompt(conn, task_id: str) -> str:
+    """Assemble a builder-role prompt from the Task body + parent Spec criteria.
+
+    Pure (single-threaded; reads conn). tick() calls this BEFORE dispatch and
+    passes the result into the job dict, so the thread-run _real_launch never
+    touches the sqlite connection. Embedded guidance mirrors agents/builder.md,
+    kept concise.
+    """
+    task = nodes.get_node(conn, task_id)
+    spec_ids = relations.neighbors(conn, task_id, "implements", "out")
+    spec = nodes.get_node(conn, spec_ids[0]) if spec_ids else None
+
+    criteria = []
+    if spec and spec.get("criteria_json"):
+        try:
+            criteria = json.loads(spec["criteria_json"])
+        except (TypeError, ValueError):
+            criteria = []
+    if not isinstance(criteria, list):
+        criteria = []
+    criteria_lines = "\n".join(
+        f"  {i}. {c.get('text', '')} (verify: {c.get('verify', '')})"
+        for i, c in enumerate(c for c in criteria if isinstance(c, dict))
+    ) or "  (none)"
+
+    spec_id = spec["id"] if spec else "(none)"
+    return (
+        "You are a builder agent implementing one task inside a git worktree.\n"
+        f"Task id: {task_id}\n"
+        f"Spec id: {spec_id}\n\n"
+        "## Task\n"
+        f"{task['body']}\n\n"
+        "## Acceptance criteria (from the parent spec)\n"
+        f"{criteria_lines}\n\n"
+        "## Instructions\n"
+        "- Implement the task in the CURRENT worktree directory.\n"
+        "- Self-verify your work against each acceptance criterion above.\n"
+        "- Commit your work with a descriptive message. Do NOT push.\n"
+        "- Stop after committing.\n"
+    )
+
+
 # --- retry cap (CriticalLoop-backed) ---------------------------------------
 def _find_open_dispatch_loop(conn, task_id: str) -> dict | None:
     """The open CriticalLoop tracking this task's dispatch failures, or None.
