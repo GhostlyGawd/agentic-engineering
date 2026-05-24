@@ -13,7 +13,7 @@ import subprocess
 
 import pytest
 
-from agentic_mcp import calibration, db, nodes, orchestrate, relations
+from agentic_mcp import calibration, claims, db, nodes, orchestrate, relations
 
 
 def _mk_conn(tmp_db_path):
@@ -313,3 +313,235 @@ def test_real_worktree_idempotent_on_redispatch(tmp_path):
     path2, branch2 = orchestrate._real_worktree(str(repo), "t1")
     assert path1 == path2
     assert branch1 == branch2 == "orch/t1"
+
+
+def test_stale_node_surfaced_readonly(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        nid = nodes.create_node(conn, "Goal", status="open", owner="t", body="b")
+        # Backdate last_touched well past the default 14-day threshold.
+        conn.execute("UPDATE goal SET last_touched=? WHERE id=?",
+                     ("2000-01-01T00:00:00+00:00", nid))
+        conn.commit()
+        before = nodes.get_node(conn, nid)
+        result = orchestrate.tick(
+            conn, launch_fn=fake_launch_ok, worktree_factory=fake_worktree,
+            merge_fn=fake_merge_ok, review_fn=fake_review_clean,
+        )
+        assert nid in result["stale_nodes"]
+        after = nodes.get_node(conn, nid)
+        assert after["status"] == before["status"]           # not auto-closed
+        assert after["last_touched"] == before["last_touched"]  # not touched
+    finally:
+        conn.close()
+
+
+def test_fresh_node_not_surfaced(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        nid = nodes.create_node(conn, "Goal", status="open", owner="t", body="b")
+        result = orchestrate.tick(
+            conn, launch_fn=fake_launch_ok, worktree_factory=fake_worktree,
+            merge_fn=fake_merge_ok, review_fn=fake_review_clean,
+        )
+        assert nid not in result["stale_nodes"]
+    finally:
+        conn.close()
+
+
+def test_retry_cap_escalates_on_third_failure(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+
+        def fail(job):
+            return {"task_id": job["task_id"], "ok": False, "error": "boom"}
+
+        for _ in range(2):  # strikes 1 and 2 -> pending
+            orchestrate.tick(conn, launch_fn=fail, worktree_factory=fake_worktree,
+                             merge_fn=fake_merge_ok, review_fn=fake_review_clean)
+            assert nodes.get_node(conn, t1)["status"] == "pending"
+
+        r3 = orchestrate.tick(conn, launch_fn=fail, worktree_factory=fake_worktree,
+                              merge_fn=fake_merge_ok, review_fn=fake_review_clean)
+        assert nodes.get_node(conn, t1)["status"] == "escalated"
+        assert t1 in {e["task_id"] for e in r3["escalations"]}
+        # Intentional double-surface: an escalating launch failure appears in
+        # both `failed` (this tick's failure) and `escalations` (terminal state).
+        assert t1 in r3["failed"]
+        loop = orchestrate._find_open_dispatch_loop(conn, t1)
+        assert loop["iteration_count"] == 3
+        assert loop["diagnostic_fired_at"] is not None
+    finally:
+        conn.close()
+
+
+def test_escalated_task_not_redispatched(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+
+        def fail(job):
+            return {"task_id": job["task_id"], "ok": False, "error": "boom"}
+
+        for _ in range(3):
+            orchestrate.tick(conn, launch_fn=fail, worktree_factory=fake_worktree,
+                             merge_fn=fake_merge_ok, review_fn=fake_review_clean)
+        assert nodes.get_node(conn, t1)["status"] == "escalated"
+        r = orchestrate.tick(conn, launch_fn=fake_launch_ok,
+                             worktree_factory=fake_worktree,
+                             merge_fn=fake_merge_ok, review_fn=fake_review_clean)
+        assert t1 not in r["dispatched"]
+    finally:
+        conn.close()
+
+
+def test_repeated_needs_fixing_escalates_on_third(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+
+        def needs_fixing(conn_, tid, r):
+            return {"verdict": "NEEDS_FIXING", "reviewer": "code-reviewer",
+                    "hit": False}
+
+        for _ in range(2):
+            orchestrate.tick(conn, launch_fn=fake_launch_ok,
+                             worktree_factory=fake_worktree,
+                             merge_fn=fake_merge_ok, review_fn=needs_fixing)
+            assert nodes.get_node(conn, t1)["status"] == "pending"
+        orchestrate.tick(conn, launch_fn=fake_launch_ok,
+                         worktree_factory=fake_worktree,
+                         merge_fn=fake_merge_ok, review_fn=needs_fixing)
+        assert nodes.get_node(conn, t1)["status"] == "escalated"
+    finally:
+        conn.close()
+
+
+def test_failure_then_success_resolves_loop(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        calls = {"n": 0}
+
+        def flaky(job):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {"task_id": job["task_id"], "ok": False, "error": "boom"}
+            return {"task_id": job["task_id"], "ok": True, "sha": "deadbeef"}
+
+        orchestrate.tick(conn, launch_fn=flaky, worktree_factory=fake_worktree,
+                         merge_fn=fake_merge_ok, review_fn=fake_review_clean)
+        assert orchestrate._find_open_dispatch_loop(conn, t1) is not None
+
+        r2 = orchestrate.tick(conn, launch_fn=flaky, worktree_factory=fake_worktree,
+                              merge_fn=fake_merge_ok, review_fn=fake_review_clean)
+        assert t1 in r2["merged"]
+        assert orchestrate._find_open_dispatch_loop(conn, t1) is None
+    finally:
+        conn.close()
+
+
+def test_integration_branch_match_merges(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        result = orchestrate.tick(
+            conn, launch_fn=fake_launch_ok, worktree_factory=fake_worktree,
+            merge_fn=fake_merge_ok, review_fn=fake_review_clean,
+            integration_branch="main", current_branch_fn=lambda repo: "main",
+        )
+        assert t1 in result["merged"]
+    finally:
+        conn.close()
+
+
+def test_clean_task_blocked_by_branch_guard_resolves_dispatch_loop(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+
+        def fail_once(job):
+            return {"task_id": job["task_id"], "ok": False, "error": "boom"}
+
+        # Tick 1: fail -> open dispatch loop at count 1, task back to pending.
+        orchestrate.tick(conn, launch_fn=fail_once, worktree_factory=fake_worktree,
+                         merge_fn=fake_merge_ok, review_fn=fake_review_clean)
+        loop = orchestrate._find_open_dispatch_loop(conn, t1)
+        assert loop is not None and loop["iteration_count"] == 1
+
+        # Tick 2: launch ok + review CLEAN, but HEAD != integration branch.
+        merged_calls = []
+        r2 = orchestrate.tick(
+            conn, launch_fn=fake_launch_ok, worktree_factory=fake_worktree,
+            merge_fn=lambda repo, b: merged_calls.append(b),
+            review_fn=fake_review_clean,
+            integration_branch="main", current_branch_fn=lambda repo: "feature-x",
+        )
+        # Branch guard blocked the merge...
+        assert merged_calls == []
+        assert t1 in {e["task_id"] for e in r2["escalations"]}
+        # Tick 1's failed claim was released; tick 2's claim is still held (the
+        # guard does not release it). So the task carries one released + one held
+        # claim - assert the LIVE claim is held, not the full historical list.
+        assert "held" in _claim_status(conn, t1)
+        assert nodes.get_node(conn, t1)["status"] == "in_progress"
+        # ...but build+review succeeded, so the dispatch loop is resolved.
+        assert orchestrate._find_open_dispatch_loop(conn, t1) is None
+
+        # Operator resets the parked task (status -> pending AND the held claim
+        # released so the scope is free to re-dispatch); a fresh failure starts a
+        # NEW loop at count 1 (strike budget intact - not drifted to 2 by a stale
+        # loop).
+        nodes.update_node(conn, t1, status="pending")
+        held = conn.execute(
+            "SELECT id FROM claim WHERE task_id=? AND status='held'", (t1,)
+        ).fetchone()
+        claims.release_claim(conn, held[0])
+        orchestrate.tick(conn, launch_fn=fail_once, worktree_factory=fake_worktree,
+                         merge_fn=fake_merge_ok, review_fn=fake_review_clean)
+        loop3 = orchestrate._find_open_dispatch_loop(conn, t1)
+        assert loop3 is not None and loop3["iteration_count"] == 1
+    finally:
+        conn.close()
+
+
+def test_integration_branch_mismatch_skips_and_escalates(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        merged_calls = []
+        result = orchestrate.tick(
+            conn, launch_fn=fake_launch_ok, worktree_factory=fake_worktree,
+            merge_fn=lambda r, b: merged_calls.append(b),
+            review_fn=fake_review_clean,
+            integration_branch="main",
+            current_branch_fn=lambda repo: "feature-x",
+        )
+        assert result["merged"] == []
+        assert merged_calls == []  # merge_fn never called
+        assert t1 in {e["task_id"] for e in result["escalations"]}
+        assert _claim_status(conn, t1) == ["held"]  # held for a later correct tick
+    finally:
+        conn.close()
+
+
+def test_integration_branch_none_is_default_behavior(tmp_db_path):
+    conn = _mk_conn(tmp_db_path)
+    try:
+        spec = _dispatched_spec(conn)
+        t1 = _task(conn, spec, ["src/a/*"])
+        result = orchestrate.tick(  # no integration_branch -> merges regardless
+            conn, launch_fn=fake_launch_ok, worktree_factory=fake_worktree,
+            merge_fn=fake_merge_ok, review_fn=fake_review_clean,
+        )
+        assert t1 in result["merged"]
+    finally:
+        conn.close()

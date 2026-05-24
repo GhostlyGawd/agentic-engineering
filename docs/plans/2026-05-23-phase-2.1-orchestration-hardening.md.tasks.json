@@ -1,0 +1,40 @@
+{
+  "planPath": "docs/plans/2026-05-23-phase-2.1-orchestration-hardening.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Extract resolve_db_path into db.py",
+      "status": "completed",
+      "description": "**Goal:** Single owner for resolve AGENTIC_DB_PATH + init-if-missing; server.py and orchestrate.py both call db.resolve_db_path(); no behavior change.\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/db.py\", \"mcp-server/src/agentic_mcp/server.py\", \"mcp-server/src/agentic_mcp/orchestrate.py\", \"mcp-server/tests/test_db.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_db.py tests/test_server.py tests/test_orchestrate.py -q\", \"acceptanceCriteria\": [\"resolve_db_path honors env var, defaults, inits missing\", \"existing DB not re-initialized destructively\", \"both modules call db.resolve_db_path; no private _db_path remains\", \"test_server + test_orchestrate pass unchanged\"]}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: Wire node-level weeding into the tick",
+      "status": "completed",
+      "blockedBy": [0],
+      "description": "**Goal:** tick() surfaces stale non-terminal nodes (read-only) in result[\"stale_nodes\"] as ids, alongside flag_stale_specs.\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/orchestrate.py\", \"mcp-server/tests/test_orchestrate.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_orchestrate.py -q\", \"acceptanceCriteria\": [\"result['stale_nodes'] is a list of ids\", \"stale non-terminal node appears\", \"fresh node does not\", \"step mutates nothing (status + last_touched unchanged)\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Retry cap via CriticalLoop reuse",
+      "status": "completed",
+      "blockedBy": [1],
+      "description": "**Goal:** Persistently failing task escalates on 3rd cumulative failure via a dispatch-failure Finding + CriticalLoop; recovery resolves the loop. Rewire 3 failure sites + merge recovery; add _find_open_dispatch_loop + _handle_failure helpers; import findings + loops.\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/orchestrate.py\", \"mcp-server/tests/test_orchestrate.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_orchestrate.py -q\", \"acceptanceCriteria\": [\"3rd launch failure -> status escalated, loop iteration_count==3 + diagnostic fired, escalations entry\", \"escalated task not re-dispatched\", \"3 NEEDS_FIXING -> escalated\", \"fail-then-succeed resolves loop, no escalation\", \"existing single-failure tests still pass\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: Opt-in integration-branch enforcement",
+      "status": "completed",
+      "blockedBy": [2],
+      "description": "**Goal:** tick(integration_branch=...) refuses to merge unless HEAD matches; skips merges + escalates each CLEAN task, non-fatal. None preserves today's behavior. Add _real_current_branch seam, current_branch_fn param, merge-phase guard, CLI flag.\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/orchestrate.py\", \"mcp-server/tests/test_orchestrate.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest -m \\\"not llm\\\" -q\", \"acceptanceCriteria\": [\"integration_branch=None identical to today\", \"matching branch merges\", \"mismatch -> zero merges, merge_fn never called, all CLEAN escalated, claims held\", \"CLI --integration-branch passes through\", \"full fast suite green\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Update orchestrate docs + handoff",
+      "status": "completed",
+      "blockedBy": [3],
+      "description": "**Goal:** Reflect the four changes in commands/orchestrate.md, the orchestrate.py module docstring, and HANDOFF.md (mark items 1-4 closed, leave item 5).\n\n```json:metadata\n{\"files\": [\"commands/orchestrate.md\", \"mcp-server/src/agentic_mcp/orchestrate.py\", \"docs/plans/HANDOFF.md\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest -m \\\"not llm\\\" -q\", \"acceptanceCriteria\": [\"orchestrate.md documents --integration-branch + stale_nodes summary key + retry cap\", \"module docstring states retry cap + opt-in enforcement\", \"HANDOFF reflects 1-4 closed, 5 remaining\", \"fast suite green\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-05-23T21:30:00+00:00"
+}

@@ -5,6 +5,7 @@ are deferred to Phase 3 when pattern-finder needs vector search.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -33,3 +34,16 @@ def init_db(path: str | Path) -> None:
         migrations.apply_migrations(conn)  # layer Phase 1 on fresh schema
     finally:
         conn.close()
+
+
+def resolve_db_path() -> Path:
+    """Resolve AGENTIC_DB_PATH (default ./.agentic/graph.db); init if missing.
+
+    Single owner for the server CLI and the orchestrate CLI (both opened the DB
+    the same way; this de-duplicates that logic).
+    """
+    raw = os.environ.get("AGENTIC_DB_PATH", "./.agentic/graph.db")
+    p = Path(raw).resolve()
+    if not p.exists():
+        init_db(p)
+    return p

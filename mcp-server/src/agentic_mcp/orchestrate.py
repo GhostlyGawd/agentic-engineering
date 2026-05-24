@@ -13,24 +13,30 @@ graph DB passed in; nothing is cached between ticks.
 
 Contract guarantee: tick() MUST NOT raise for normal worker/review/merge
 failures - those become entries in result["failed"]/result["escalations"]. Only
-genuine programming errors propagate.
+genuine programming errors propagate. Worker/review/setup failures now accrue
+strikes on a per-task CriticalLoop and escalate on the 3rd (status `escalated`)
+rather than re-dispatching indefinitely.
 
 Integration-branch assumption: _real_merge merges each worktree branch into the
 repo's CURRENTLY-CHECKED-OUT branch, assumed to be the integration branch
 (HEAD == integration branch). The deployment is responsible for checking out
-that branch before running ticks; the orchestrator documents but does not
-enforce this.
+that branch before running ticks. Enforcement is now available OPT-IN via
+tick(integration_branch=...) / --integration-branch: on a HEAD mismatch the tick
+skips ALL merges and escalates each CLEAN task. The default (None) preserves the
+documented-only assumption (merge into whatever HEAD is checked out).
 """
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-from . import calibration, claims, db, headless, nodes, relations, scheduler, weeding
+from . import (
+    calibration, claims, db, findings, headless, loops, nodes, relations,
+    scheduler, weeding,
+)
 
 
 # --- scope parsing ---------------------------------------------------------
@@ -110,6 +116,12 @@ def _real_merge(repo: str, branch: str) -> None:
     _git(["-C", repo, "merge", "--no-ff", branch])
 
 
+def _real_current_branch(repo: str) -> str:
+    # The branch HEAD points at. Compared to integration_branch when that guard
+    # is enabled; injectable so fast tests need no real git.
+    return _git(["-C", repo, "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
+
+
 def _real_review(conn, task_id: str, job_result: dict) -> dict:
     """Minimal integration-default reviewer.
 
@@ -124,6 +136,55 @@ def _real_review(conn, task_id: str, job_result: dict) -> dict:
             "calibrate": False}
 
 
+# --- retry cap (CriticalLoop-backed) ---------------------------------------
+def _find_open_dispatch_loop(conn, task_id: str) -> dict | None:
+    """The open CriticalLoop tracking this task's dispatch failures, or None.
+
+    Linkage survives stateless ticks: a 'dispatch-failure' Finding has
+    parent_id == task_id, and the loop's finding_id points back to it.
+    """
+    row = conn.execute(
+        "SELECT cl.id FROM critical_loop cl "
+        "JOIN finding f ON f.id = cl.finding_id "
+        "WHERE f.parent_id = ? AND f.subtype = 'dispatch-failure' "
+        "AND cl.status = 'open' "
+        "ORDER BY cl.started_at LIMIT 1",
+        (task_id,),
+    ).fetchone()
+    return nodes.get_node(conn, row[0]) if row else None
+
+
+def _handle_failure(conn, task_id: str, claim_id: str, reason: str,
+                    result: dict) -> None:
+    """Record a dispatch failure; escalate on the 3rd strike, else reset to pending.
+
+    Strike count lives in the CriticalLoop's iteration_count (schema default 1).
+    First failure CREATES the loop (count = 1, no advance); each later failure
+    advances it (1->2, 2->3). When advance pushes count to DIAGNOSTIC_THRESHOLD
+    (3) the loop stamps diagnostic_fired_at and the task escalates instead of
+    re-dispatching. Either way the claim is released so the scope is freed.
+    """
+    loop = _find_open_dispatch_loop(conn, task_id)
+    if loop is None:
+        fid = findings.log_finding(
+            conn, parent_id=task_id, severity="Important",
+            subtype="dispatch-failure", body=reason,
+        )
+        loop = nodes.get_node(conn, loops.start_critical_loop(conn, fid))
+    else:
+        loop = loops.advance_critical_loop(conn, loop["id"])
+
+    claims.release_claim(conn, claim_id)
+    if loop["diagnostic_fired_at"]:
+        nodes.update_node(conn, task_id, status="escalated")
+        result["escalations"].append({
+            "task_id": task_id, "reason": reason,
+            "iterations": loop["iteration_count"],
+        })
+    else:
+        nodes.update_node(conn, task_id, status="pending")
+
+
 # --- the tick --------------------------------------------------------------
 def tick(
     conn,
@@ -135,9 +196,12 @@ def tick(
     worktree_factory=_real_worktree,
     merge_fn=_real_merge,
     review_fn=_real_review,
+    integration_branch: str | None = None,
+    current_branch_fn=_real_current_branch,
 ) -> dict:
     result = {
         "weeded": [],
+        "stale_nodes": [],
         "dispatched": [],
         "merged": [],
         "failed": [],
@@ -145,8 +209,11 @@ def tick(
         "calibrated": [],
     }
 
-    # 1. Weed stale specs.
+    # 1. Weed: flag stale dispatched specs (stamps stale_flagged_at) AND surface
+    # stale non-terminal nodes for triage. find_stale_nodes is read-only by
+    # contract - it never changes status or sets a flag; we only report ids.
     result["weeded"] = weeding.flag_stale_specs(conn, weed_days)
+    result["stale_nodes"] = [n["id"] for n in weeding.find_stale_nodes(conn, weed_days)]
 
     # 2. Ready set.
     ready = scheduler.ready_tasks(conn)
@@ -182,11 +249,8 @@ def tick(
             wt, branch = worktree_factory(repo, tid)
             claims.attach_worktree(conn, cid, wt, branch)
             nodes.update_node(conn, tid, status="in_progress")
-        except Exception:  # noqa: BLE001 - setup failure must never propagate
-            try:
-                claims.release_claim(conn, cid)
-            except claims.ClaimConflict:
-                pass  # already released somehow; nothing to undo
+        except Exception as e:  # noqa: BLE001 - setup failure must never propagate
+            _handle_failure(conn, tid, cid, f"worktree/setup failure: {e}", result)
             result["failed"].append(tid)
             continue
         claim_ids[tid] = cid
@@ -212,13 +276,17 @@ def tick(
                 result["calibrated"].append(reviewer)
         if rv["verdict"] == "CLEAN":
             clean_ids.append(tid)
+            # Build + review succeeded, so any open dispatch-failure loop for
+            # this task is resolved NOW - not deferred to merge success. This
+            # keeps the strike budget correct if the merge is then skipped (e.g.
+            # integration-branch guard) or fails (merge conflict): a later reset
+            # + failure starts a FRESH loop rather than advancing a stale one.
+            recovered = _find_open_dispatch_loop(conn, tid)
+            if recovered is not None:
+                loops.resolve_critical_loop(conn, recovered["id"])
         else:
-            # NEEDS_FIXING: reset to 'pending' and release the claim so the task
-            # re-enters the ready set next tick (ready_tasks only sees
-            # pending/ready, and a re-claim needs the scope free). Leaving it
-            # in_progress with a held claim would strand it forever.
-            nodes.update_node(conn, tid, status="pending")
-            claims.release_claim(conn, claim_ids[tid])
+            _handle_failure(conn, tid, claim_ids[tid],
+                            "NEEDS_FIXING review verdict", result)
 
     # 7. Merge CLEAN tasks in dependency (topological) order.
     # NOTE: within a SINGLE tick this edge set is always empty - ready_tasks
@@ -227,6 +295,26 @@ def tick(
     # correctness therefore lives in CROSS-TICK sequencing (the prerequisite
     # merges first, which makes the dependent ready next tick). merge_order is
     # kept here for robustness/correctness if that invariant ever changes.
+    # Integration-branch guard (opt-in). If HEAD is not the integration branch,
+    # refuse to merge anything into the wrong branch: escalate every CLEAN task
+    # and skip merging. Claims stay held and the tasks remain in_progress,
+    # pending external recovery - same as the merge-conflict escalation path
+    # (no automatic cross-tick retry, since ready_tasks only re-selects
+    # pending/ready tasks). tick() still completes - weeding/dispatch/review
+    # already ran.
+    if integration_branch is not None and clean_ids:
+        actual = current_branch_fn(repo)
+        if actual != integration_branch:
+            for tid in clean_ids:
+                # Shares the merge-conflict escalation shape {task_id, error};
+                # the retry-cap escalation site additionally carries `iterations`.
+                result["escalations"].append({
+                    "task_id": tid,
+                    "error": (f"HEAD on {actual}, expected integration branch "
+                              f"{integration_branch}"),
+                })
+            clean_ids = []  # skip all merges; claims remain held
+
     edges = [
         (tid, dep)
         for tid in clean_ids
@@ -241,19 +329,24 @@ def tick(
             continue  # leave claim held for retry / human intervention
         nodes.update_node(conn, tid, status="merged")
         claims.release_claim(conn, claim_ids[tid])
+        # Any open dispatch-failure loop for a previously-flaky task was already
+        # resolved at the CLEAN-verdict step (step 6), so nothing to do here.
         result["merged"].append(tid)
 
-    # 8. Failed launches: same recovery as NEEDS_FIXING - reset to 'pending' and
-    # release the claim so the task re-enters the ready set next tick (otherwise
-    # it stays in_progress with a held claim, stranding its scope forever). Still
-    # recorded in `failed` for visibility. Like NEEDS_FIXING this has no retry cap
-    # yet (disclosed limitation) - a persistently failing task re-dispatches each
-    # tick.
+    # 8. Failed launches: route through _handle_failure, which records a
+    # CriticalLoop strike. Strikes 1 and 2 reset the task to 'pending' and
+    # release the claim so it re-enters the ready set next tick; the 3rd strike
+    # escalates instead (status='escalated', no re-dispatch). An escalating
+    # launch failure is recorded in BOTH result["failed"] (operational
+    # visibility - the launch did fail this tick) and result["escalations"]
+    # (its terminal state); this double-surfacing is intentional.
     for r in results:
         if not r.get("ok"):
             tid = r["task_id"]
-            nodes.update_node(conn, tid, status="pending")
-            claims.release_claim(conn, claim_ids[tid])
+            _handle_failure(conn, tid, claim_ids[tid],
+                            r.get("error", "launch failed"), result)
+            # Intentional double-surface: a launch failure that escalates lands
+            # in both `failed` (this tick's failure) and `escalations` (terminal).
             result["failed"].append(tid)
 
     # 9. Return the tick summary.
@@ -261,16 +354,6 @@ def tick(
 
 
 # --- CLI -------------------------------------------------------------------
-def _db_path() -> Path:
-    # Mirror server._db_path: resolve AGENTIC_DB_PATH (default ./.agentic/graph.db),
-    # init if missing.
-    raw = os.environ.get("AGENTIC_DB_PATH", "./.agentic/graph.db")
-    p = Path(raw).resolve()
-    if not p.exists():
-        db.init_db(p)
-    return p
-
-
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")  # cp1252 default on this box
     parser = argparse.ArgumentParser(prog="agentic_mcp.orchestrate")
@@ -281,12 +364,15 @@ def main() -> int:
     parser.add_argument("--weed-days", type=int, default=14,
                         help="stale-spec threshold in days")
     parser.add_argument("--repo", default=".", help="repo root for git seams")
+    parser.add_argument("--integration-branch", default=None,
+                        help="if set, refuse to merge unless HEAD == this branch")
     args = parser.parse_args()
 
-    conn = db.connect(_db_path())
+    conn = db.connect(db.resolve_db_path())
     try:
         result = tick(
-            conn, repo=args.repo, pool_size=args.pool, weed_days=args.weed_days
+            conn, repo=args.repo, pool_size=args.pool, weed_days=args.weed_days,
+            integration_branch=args.integration_branch,
         )
     finally:
         conn.close()

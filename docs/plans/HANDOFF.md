@@ -25,13 +25,20 @@ A self-improving engineering system packaged as a Claude Code plugin, dogfooded 
 
 The graph IS the board. The orchestrator is STATELESS SINGLE-TICK (`/agentic:orchestrate --once`; `/loop` or cron owns the cadence) - each tick a fresh, graph-hydrated process, so nothing accumulates a transcript. Ephemeral headless `claude -p ... --permission-mode bypassPermissions` workers/reviewers, one per orthogonal claimed task, isolated in git worktrees. Serial-when-shared via scope claims; DAG-ordered merge; trust-weighting calibration gates scheduling.
 
-## Open Phase 2.1 follow-ups (none blocking)
+## Open Phase 2.1 follow-ups
 
-1. **No retry cap** - `NEEDS_FIXING`/launch-failed tasks reset to `pending` + release their claim, so a persistently failing task re-dispatches every tick. Wire into the Phase-1 critical-loop 3-iteration diagnostic.
-2. **Node-level weeding unwired** - `weeding.find_stale_nodes` exists but the tick only weeds dispatched Specs via `flag_stale_specs`.
-3. **`_db_path` duplicated** in `server.py` and `orchestrate.py` (harmless - separate processes; extract to `db.py`).
-4. **Integration branch assumed** - the tick merges into whatever HEAD is checked out; document or enforce that it is the integration branch.
-5. **Python `tick()` `review_fn` is a CLEAN stub** - the full Phase-1 review panel is the orchestrator AGENT's job (driven via tool calls); the seam exists for injection (the e2e overrides it).
+Items 1-4 are now CLOSED (landed in Phase 2.1). Only item 5 remains open.
+
+### Closed in Phase 2.1
+
+1. **Retry cap** - DONE. `NEEDS_FIXING` verdicts and launch/setup failures route through a per-task CriticalLoop: reset to pending on strikes 1-2, escalate (status `escalated`) on the 3rd. Escalating launch/setup failures appear in both `result["failed"]` and `result["escalations"]`.
+2. **Node-level weeding** - DONE. `tick()` now surfaces `result["stale_nodes"]` (read-only ids of stale non-terminal nodes) alongside `result["weeded"]`. NOTE: weeding remains scoped to dispatched Specs; `stale_nodes` is the surfaced-for-triage signal (a stale Spec can appear in both lists).
+3. **`_db_path` duplicated** - DONE. Extracted to `db.resolve_db_path()`; the duplicate `_db_path` removed from `server.py` and `orchestrate.py`.
+4. **Integration branch** - DONE. Enforcement is now opt-in via `tick(integration_branch=...)` / CLI `--integration-branch NAME`: on HEAD mismatch the tick skips ALL merges and escalates each CLEAN task (claims stay held, tasks remain `in_progress`). Default (None) preserves the documented-only assumption.
+
+### Open (none blocking)
+
+5. **Python `tick()` `review_fn` is a CLEAN stub** - the full Phase-1 review panel is the orchestrator AGENT's job (driven via tool calls); the seam exists for injection (the e2e overrides it). A real headless build+review loop is now designed in `docs/superpowers/specs/2026-05-23-headless-build-review-loop-design.md`.
 
 ## Repo conventions & gotchas
 
