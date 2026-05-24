@@ -15,10 +15,14 @@ human (or the architectural-review layer) should triage with `triage_pattern`
 
 ## Step 2 - Run one pattern-finding tick
 
-Run the single-tick finder over the current graph (optionally scoped to `$1`):
+Run the single-tick finder over the current graph. If you were given a scope
+argument (`$1`), pass it; otherwise OMIT `--scope` entirely to scan all scopes
+(do not pass an empty `--scope`, which would filter to the empty-string scope and
+match nothing):
 
 ```
-python -m agentic_mcp.patterns --once --scope $1
+python -m agentic_mcp.patterns --once                  # all scopes
+python -m agentic_mcp.patterns --once --scope <scope>  # one scope
 ```
 
 It groups active Finding/Bug/Retro nodes by structural signal (shared parent_id,
