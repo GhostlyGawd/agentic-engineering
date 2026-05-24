@@ -13,13 +13,17 @@ graph DB passed in; nothing is cached between ticks.
 
 Contract guarantee: tick() MUST NOT raise for normal worker/review/merge
 failures - those become entries in result["failed"]/result["escalations"]. Only
-genuine programming errors propagate.
+genuine programming errors propagate. Worker/review/setup failures now accrue
+strikes on a per-task CriticalLoop and escalate on the 3rd (status `escalated`)
+rather than re-dispatching indefinitely.
 
 Integration-branch assumption: _real_merge merges each worktree branch into the
 repo's CURRENTLY-CHECKED-OUT branch, assumed to be the integration branch
 (HEAD == integration branch). The deployment is responsible for checking out
-that branch before running ticks; the orchestrator documents but does not
-enforce this.
+that branch before running ticks. Enforcement is now available OPT-IN via
+tick(integration_branch=...) / --integration-branch: on a HEAD mismatch the tick
+skips ALL merges and escalates each CLEAN task. The default (None) preserves the
+documented-only assumption (merge into whatever HEAD is checked out).
 """
 from __future__ import annotations
 
