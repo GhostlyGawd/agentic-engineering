@@ -118,3 +118,23 @@ def test_orchestrate_command_doc():
     # Policy
     assert "pool" in low and "3" in t
     assert "14" in t
+
+
+def test_pattern_finder_doc():
+    t = _doc("agents/pattern-finder.md")
+    assert "name: pattern-finder" in t
+    assert "model: sonnet" in t
+    assert "create_node" in t and "link_nodes" in t
+    assert "derived-from" in t
+    low = t.lower()
+    assert "coincidence" in low
+    assert "genuine" in low or "recurring" in low
+
+
+def test_find_patterns_command_doc():
+    t = _doc("commands/find-patterns.md")
+    low = t.lower()
+    assert "argument-hint" in low
+    assert "pattern" in low
+    assert "query_graph" in t
+    assert "triage_pattern" in t

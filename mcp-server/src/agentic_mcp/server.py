@@ -23,6 +23,7 @@ from . import stability as stability_mod
 from . import claims as claims_mod
 from . import weeding as weeding_mod
 from . import calibration as calib_mod
+from . import patterns as patterns_mod
 
 
 def _ok(data) -> list[TextContent]:
@@ -243,6 +244,18 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="triage_pattern",
+            description="Triage a Pattern: set status to 'confirmed' or 'dismissed'.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "pattern_id": {"type": "string"},
+                    "disposition": {"type": "string"},
+                },
+                "required": ["pattern_id", "disposition"],
+            },
+        ),
+        Tool(
             name="log_retro",
             description="Write a Retro tagged by failed_layer; optionally link caused-by a finding.",
             inputSchema={
@@ -397,6 +410,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return _ok(loops_mod.get_open_loops(conn, arguments.get("scope")))
         if name == "record_triage":
             f_mod.record_triage(conn, arguments["finding_id"], arguments["decision"])
+            return _ok({"ok": True})
+        if name == "triage_pattern":
+            patterns_mod.triage_pattern(
+                conn, arguments["pattern_id"], arguments["disposition"])
             return _ok({"ok": True})
         if name == "log_retro":
             rid = f_mod.log_retro(
