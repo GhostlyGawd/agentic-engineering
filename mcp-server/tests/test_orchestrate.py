@@ -710,12 +710,31 @@ def test_real_launch_folds_exception_into_error(monkeypatch):
     assert "claude exploded" in out["error"]
 
 
-# --- _real_review (claude monkeypatched; verdict from graph) --------------
-def test_real_review_clean_when_no_open_critical(tmp_db_path, monkeypatch):
+# --- _real_review (claude monkeypatched; stages agents + inlines body) -----
+def _make_source_root(tmp_path):
+    """A tmp 'repo root' with commands/review-pr.md ($1 token) + 4 agent stubs."""
+    src = tmp_path / "src_root"
+    (src / "commands").mkdir(parents=True)
+    (src / "agents").mkdir(parents=True)
+    (src / "commands" / "review-pr.md").write_text(
+        "---\ndescription: review\nargument-hint: \"[spec_id]\"\n---\n"
+        "Review the spec $1 / $ARGUMENTS. Dispatch spec-checker then code-reviewer.\n",
+        encoding="utf-8",
+    )
+    for name in ("spec-checker", "code-reviewer", "contrarian", "builder"):
+        (src / "agents" / f"{name}.md").write_text(
+            f"---\nname: {name}\n---\nYou are {name}.\n", encoding="utf-8")
+    return src
+
+
+def test_real_review_clean_stages_agents_and_inlines_body(tmp_path, tmp_db_path, monkeypatch):
     conn = _mk_conn(tmp_db_path)
     try:
         spec = _dispatched_spec(conn)
         t1 = _task(conn, spec, ["src/a/*"])
+        src = _make_source_root(tmp_path)
+        wt = tmp_path / "wt"
+        wt.mkdir()
         seen = {}
 
         def fake_run(prompt, cwd, timeout=900, mcp_config=None):
@@ -727,62 +746,74 @@ def test_real_review_clean_when_no_open_critical(tmp_db_path, monkeypatch):
 
         monkeypatch.setattr(orchestrate.headless, "run_claude_headless", fake_run)
         rv = orchestrate._real_review(
-            conn, t1, {"worktree": "/wt/t1", "mcp_config": "/repo/.mcp.json"})
+            conn, t1, {"worktree": str(wt), "mcp_config": "cfg.json",
+                       "source_root": str(src)})
 
         assert rv["verdict"] == "CLEAN"
         assert rv["calibrate"] is False
-        assert seen["cwd"] == "/wt/t1"
-        assert seen["mcp_config"] == "/repo/.mcp.json"
-        assert seen["timeout"] == 1800
+        # agents staged into the worktree
+        staged = wt / ".claude" / "agents"
+        for name in ("spec-checker", "code-reviewer", "contrarian", "builder"):
+            assert (staged / f"{name}.md").exists(), f"{name} not staged"
+        # prompt is the inlined body with the spec id substituted, NOT a slash command
         assert spec in seen["prompt"]
-        assert "review-pr" in seen["prompt"]
+        assert "/agentic:review-pr" not in seen["prompt"]
+        assert "spec-checker" in seen["prompt"]  # body text present
+        assert "$1" not in seen["prompt"] and "$ARGUMENTS" not in seen["prompt"]
+        assert seen["cwd"] == str(wt)
+        assert seen["timeout"] == 1800
+        assert seen["mcp_config"] == "cfg.json"
     finally:
         conn.close()
 
 
-def test_real_review_needs_fixing_when_open_critical(tmp_db_path, monkeypatch):
+def test_real_review_needs_fixing_when_open_critical(tmp_path, tmp_db_path, monkeypatch):
     conn = _mk_conn(tmp_db_path)
     try:
         spec = _dispatched_spec(conn)
         t1 = _task(conn, spec, ["src/a/*"])
-        findings.log_finding(conn, parent_id=spec, severity="Critical",
-                             body="criterion failed")
+        findings.log_finding(conn, parent_id=spec, severity="Critical", body="boom")
+        src = _make_source_root(tmp_path)
+        wt = tmp_path / "wt"; wt.mkdir()
         monkeypatch.setattr(orchestrate.headless, "run_claude_headless",
                             lambda *a, **k: {"result": "reviewed"})
         rv = orchestrate._real_review(
-            conn, t1, {"worktree": "/wt/t1", "mcp_config": None})
+            conn, t1, {"worktree": str(wt), "mcp_config": None, "source_root": str(src)})
         assert rv["verdict"] == "NEEDS_FIXING"
     finally:
         conn.close()
 
 
-def test_real_review_needs_fixing_on_claude_failure(tmp_db_path, monkeypatch):
+def test_real_review_needs_fixing_on_claude_failure(tmp_path, tmp_db_path, monkeypatch):
     conn = _mk_conn(tmp_db_path)
     try:
         spec = _dispatched_spec(conn)
         t1 = _task(conn, spec, ["src/a/*"])
+        src = _make_source_root(tmp_path)
+        wt = tmp_path / "wt"; wt.mkdir()
 
         def boom(*a, **k):
-            raise RuntimeError("review-pr timed out")
+            raise RuntimeError("review timed out")
 
         monkeypatch.setattr(orchestrate.headless, "run_claude_headless", boom)
         rv = orchestrate._real_review(
-            conn, t1, {"worktree": "/wt/t1", "mcp_config": None})
+            conn, t1, {"worktree": str(wt), "mcp_config": None, "source_root": str(src)})
         assert rv["verdict"] == "NEEDS_FIXING"
     finally:
         conn.close()
 
 
-def test_real_review_needs_fixing_when_task_has_no_spec(tmp_db_path, monkeypatch):
+def test_real_review_needs_fixing_when_task_has_no_spec(tmp_path, tmp_db_path, monkeypatch):
     conn = _mk_conn(tmp_db_path)
     try:
         t1 = nodes.create_node(conn, "Task", status="pending", owner="t",
                                body="orphan", tags=json.dumps(["src/a/*"]))
-        # No implements edge -> neighbors()[0] would IndexError; must be caught.
+        src = _make_source_root(tmp_path)
+        wt = tmp_path / "wt"; wt.mkdir()
         monkeypatch.setattr(orchestrate.headless, "run_claude_headless",
                             lambda *a, **k: {"result": "reviewed"})
         rv = orchestrate._real_review(
-            conn, t1, {"worktree": "/wt/t1", "mcp_config": None})
+            conn, t1, {"worktree": str(wt), "mcp_config": None, "source_root": str(src)})
         assert rv["verdict"] == "NEEDS_FIXING"
     finally:
         conn.close()

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -125,29 +126,66 @@ def _real_current_branch(repo: str) -> str:
     return _git(["-C", repo, "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
 
 
+def _default_source_root() -> str:
+    # Repo root that ships commands/ + agents/. orchestrate.py lives at
+    # <repo>/mcp-server/src/agentic_mcp/orchestrate.py, so parents[3] is the repo
+    # root. In production tick() runs inside the repo, so this default resolves to
+    # the right place; callers (including the e2e) may override via source_root.
+    # On a wrong path the fail-safe except in _real_review degrades to NEEDS_FIXING.
+    return str(Path(__file__).resolve().parents[3])
+
+
+_REVIEW_AGENTS = ("spec-checker", "code-reviewer", "contrarian", "builder")
+
+
+def _stage_review_agents(source_root: str, worktree: str) -> None:
+    """Copy the four review agents into <worktree>/.claude/agents/ so a headless
+    `claude -p` run can dispatch them by name (headless has no slash commands, but
+    DOES discover project-level .claude/agents/*.md)."""
+    src = Path(source_root) / "agents"
+    dst = Path(worktree) / ".claude" / "agents"
+    dst.mkdir(parents=True, exist_ok=True)
+    # Re-copy every call on purpose: idempotent overwrite refreshes the staged copy
+    # and is harmless on retry-cap re-reviews of the same worktree.
+    for name in _REVIEW_AGENTS:
+        shutil.copy(src / f"{name}.md", dst / f"{name}.md")
+
+
+def _review_prompt(source_root: str, spec_id: str) -> str:
+    """The inlined review-pr command body (frontmatter stripped, spec id substituted).
+    The body IS the four-role loop engine; running it as the prompt reproduces the
+    review without a slash command (which headless does not support)."""
+    text = (Path(source_root) / "commands" / "review-pr.md").read_text(encoding="utf-8")
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) == 3:
+            text = parts[2]
+    return text.replace("$ARGUMENTS", spec_id).replace("$1", spec_id).strip()
+
+
 def _real_review(conn, task_id: str, job_result: dict) -> dict:
-    """Run the real /agentic:review-pr loop headless, then derive the verdict.
+    """Run the real four-role review loop headless, then derive the verdict.
 
-    review-pr IS the full four-role loop engine (spec-checker gate ->
-    code-reviewer + contrarian -> builder loop-fix -> re-loop until clean or
-    diminishing returns). One headless call runs the entire review-and-repair
-    cycle and lands on a terminal state; we then read the graph for the verdict.
+    Headless `claude -p` has NO custom slash commands, so we cannot invoke
+    /agentic:review-pr. Instead we stage the four review agents into the worktree's
+    .claude/agents/ (which a headless run DOES discover) and run the inlined
+    review-pr command body (spec id substituted) as the prompt. That body is the
+    full loop engine: spec-checker gate -> code-reviewer + contrarian -> builder
+    loop-fix -> re-loop. We then read the graph for the verdict.
 
-    Runs in tick()'s single-threaded review phase, so it MAY use conn. The
-    review phase has NO outer try/except, so this function MUST catch ALL of its
-    own exceptions (spec resolution included) and return NEEDS_FIXING - never
-    merge unreviewed code, never raise. The Phase 2.1 retry cap then terminates
-    a persistently unreviewable task after 3 strikes.
+    Runs in tick()'s single-threaded review phase (may use conn). The review phase
+    has NO outer try/except, so this MUST catch ALL its own exceptions (spec
+    resolution, missing source files, claude error, verdict query) and return
+    NEEDS_FIXING - never merge unreviewed code, never raise.
     """
     try:
         spec_id = relations.neighbors(conn, task_id, "implements", "out")[0]
-        # review-pr is the full multi-round loop (gate -> reviewers -> builder
-        # loop-fix -> re-loop), so it needs a larger budget than a single builder
-        # turn; a too-tight timeout would burn a retry-cap strike on a healthy
-        # but slow review.
+        source_root = job_result.get("source_root") or _default_source_root()
+        worktree = job_result["worktree"]
+        _stage_review_agents(source_root, worktree)
         headless.run_claude_headless(
-            f"/agentic:review-pr {spec_id}",
-            cwd=job_result["worktree"],
+            _review_prompt(source_root, spec_id),
+            cwd=worktree,
             timeout=1800,
             mcp_config=job_result.get("mcp_config"),
         )
@@ -283,6 +321,7 @@ def tick(
     integration_branch: str | None = None,
     current_branch_fn=_real_current_branch,
     db_path: str | Path | None = None,
+    source_root: str | None = None,
 ) -> dict:
     result = {
         "weeded": [],
@@ -374,6 +413,7 @@ def tick(
         # regardless of what launch_fn put in its result.
         r["worktree"] = worktrees.get(tid, r.get("worktree"))
         r["mcp_config"] = mcp_config
+        r["source_root"] = source_root
         rv = review_fn(conn, tid, r)
         reviewer = rv["reviewer"]
         if rv.get("calibrate", True):
