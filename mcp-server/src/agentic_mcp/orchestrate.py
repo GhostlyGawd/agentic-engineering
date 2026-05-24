@@ -276,6 +276,14 @@ def tick(
                 result["calibrated"].append(reviewer)
         if rv["verdict"] == "CLEAN":
             clean_ids.append(tid)
+            # Build + review succeeded, so any open dispatch-failure loop for
+            # this task is resolved NOW - not deferred to merge success. This
+            # keeps the strike budget correct if the merge is then skipped (e.g.
+            # integration-branch guard) or fails (merge conflict): a later reset
+            # + failure starts a FRESH loop rather than advancing a stale one.
+            recovered = _find_open_dispatch_loop(conn, tid)
+            if recovered is not None:
+                loops.resolve_critical_loop(conn, recovered["id"])
         else:
             _handle_failure(conn, tid, claim_ids[tid],
                             "NEEDS_FIXING review verdict", result)
@@ -321,11 +329,8 @@ def tick(
             continue  # leave claim held for retry / human intervention
         nodes.update_node(conn, tid, status="merged")
         claims.release_claim(conn, claim_ids[tid])
-        # A flaky task that previously failed carries an open dispatch loop;
-        # resolve it on success so it does not linger or count toward weeding.
-        recovered = _find_open_dispatch_loop(conn, tid)
-        if recovered is not None:
-            loops.resolve_critical_loop(conn, recovered["id"])
+        # Any open dispatch-failure loop for a previously-flaky task was already
+        # resolved at the CLEAN-verdict step (step 6), so nothing to do here.
         result["merged"].append(tid)
 
     # 8. Failed launches: route through _handle_failure, which records a

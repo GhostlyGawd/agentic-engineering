@@ -95,6 +95,15 @@ per-task CriticalLoop; a task that fails 3 times escalates (status `escalated`)
 instead of re-dispatching forever. An escalating launch/setup failure is
 recorded in both `failed` and `escalations`.
 
+**`escalations` holds two lifecycle shapes** (every entry has `task_id`; the
+presence of `reason`/`iterations` vs `error` tells them apart):
+- Retry-cap entries `{task_id, reason, iterations}` -> task `status=escalated`,
+  claim RELEASED. Terminal: the scope is freed and the task will not re-dispatch.
+- Branch-mismatch and merge-conflict entries `{task_id, error}` -> task stays
+  `in_progress`, claim HELD. Recoverable: needs the deployment fixed (check out
+  the integration branch / resolve the conflict) or an external reset before it
+  can proceed; there is no automatic cross-tick retry.
+
 ### Step 6 - Calibrate
 
 For each role that acted this tick, call `record_outcome(role=<name>, hit=<bool>)`:
