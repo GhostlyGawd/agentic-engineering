@@ -52,3 +52,69 @@ def scheduler_pass(registry: dict, state_conn, *, now: datetime | None = None,
                 result["errors"].append({"task": label,
                                          "error": outcome.get("error", "error")})
     return result
+
+
+import argparse
+import json
+import sys
+import time
+
+from . import control_api
+
+_POLL_SECONDS = 15
+_DEFAULT_PORT = 8787
+
+
+def run_once(*, registry_path=None, state_path=None, now=None, spawn_fn=None) -> dict:
+    """Open state, run one scheduler pass, write the heartbeat, return the result."""
+    registry_path = registry_path or cfg.default_registry_path()
+    state_path = state_path or st.default_state_path()
+    registry = cfg.load_registry(registry_path)
+    conn = st.connect_state(state_path)
+    try:
+        now = now or _now_utc()
+        result = scheduler_pass(registry, conn, now=now, spawn_fn=spawn_fn)
+        st.beat(conn, now.isoformat(timespec="seconds"))
+        return result
+    finally:
+        conn.close()
+
+
+def run_forever(*, registry_path=None, state_path=None, port=_DEFAULT_PORT,
+                poll_seconds=_POLL_SECONDS) -> None:  # pragma: no cover - loop
+    """Start the control API thread, then loop scheduler passes until interrupted."""
+    registry_path = registry_path or cfg.default_registry_path()
+    state_path = state_path or st.default_state_path()
+    server = control_api.build_server(
+        registry_loader=lambda: cfg.load_registry(registry_path),
+        state_path=state_path,
+        run_fn=lambda path, tick: tick_spawn.spawn_tick(path, tick),
+        port=port,
+    )
+    import threading
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        while True:
+            run_once(registry_path=registry_path, state_path=state_path)
+            time.sleep(poll_seconds)
+    except KeyboardInterrupt:
+        server.shutdown()
+
+
+def main(argv=None) -> int:
+    sys.stdout.reconfigure(encoding="utf-8")  # cp1252 default on this box
+    parser = argparse.ArgumentParser(prog="agentic-supervisor")
+    parser.add_argument("--once", action="store_true",
+                        help="run a single scheduler pass and exit")
+    parser.add_argument("--port", type=int, default=_DEFAULT_PORT,
+                        help="loopback control API port (run-forever mode)")
+    args = parser.parse_args(argv)
+    if args.once:
+        print(json.dumps(run_once(), default=str))
+        return 0
+    run_forever(port=args.port)  # pragma: no cover
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
