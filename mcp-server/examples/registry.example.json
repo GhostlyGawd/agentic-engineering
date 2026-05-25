@@ -1,0 +1,14 @@
+{
+  "projects": [
+    {
+      "path": "D:/GitHub Projects/Studies/Superpowers Study",
+      "enabled": true,
+      "scope_mode": "isolated",
+      "cadences": {
+        "orchestrate": "2m",
+        "pattern_finder": "6h"
+      },
+      "promotion_cap": 5
+    }
+  ]
+}

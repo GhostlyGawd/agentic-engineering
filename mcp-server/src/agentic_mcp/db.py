@@ -18,6 +18,11 @@ def connect(path: str | Path) -> sqlite3.Connection:
     """Open a SQLite connection. Caller manages close()."""
     conn = sqlite3.connect(str(path))
     conn.execute("PRAGMA foreign_keys = ON")
+    # Cross-process contention is now by-design (the supervisor's tick
+    # connections vs the HUD's read connections). Wait on a held lock instead
+    # of failing fast with 'database is locked'. (Python's sqlite3 already
+    # defaults timeout=5.0s, but we set it explicitly so the intent is durable.)
+    conn.execute("PRAGMA busy_timeout = 5000")
     migrations.apply_migrations(conn)  # upgrade existing DBs on open
     return conn
 

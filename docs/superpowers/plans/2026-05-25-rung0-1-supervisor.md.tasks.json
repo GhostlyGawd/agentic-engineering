@@ -1,0 +1,65 @@
+{
+  "planPath": "docs/superpowers/plans/2026-05-25-rung0-1-supervisor.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: busy_timeout in db.connect",
+      "status": "completed",
+      "description": "**Goal:** Concurrent connections wait up to 5s on a lock instead of failing with 'database is locked'.\n\n**Files:** Modify mcp-server/src/agentic_mcp/db.py; Test mcp-server/tests/test_db.py\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/db.py\", \"mcp-server/tests/test_db.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_db.py -q\", \"acceptanceCriteria\": [\"busy_timeout=5000 on every connection\", \"existing db tests pass\"]}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: supervisor_config (registry + cadence)",
+      "status": "completed",
+      "description": "**Goal:** Load/validate ~/.agentic/registry.json + pure cadence parsing + due-calculation.\n\n**Files:** Create mcp-server/src/agentic_mcp/supervisor_config.py; Test mcp-server/tests/test_supervisor_config.py\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/supervisor_config.py\", \"mcp-server/tests/test_supervisor_config.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_supervisor_config.py -q\", \"acceptanceCriteria\": [\"default_registry_path env override\", \"load_registry defaults + raises malformed\", \"parse_cadence grammar+aliases\", \"is_due logic\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: supervisor_state (ephemeral store)",
+      "status": "completed",
+      "description": "**Goal:** Small SQLite store for last_run/outcome, heartbeat, runtime pause flags. No durable project data.\n\n**Files:** Create mcp-server/src/agentic_mcp/supervisor_state.py; Test mcp-server/tests/test_supervisor_state.py\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/supervisor_state.py\", \"mcp-server/tests/test_supervisor_state.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_supervisor_state.py -q\", \"acceptanceCriteria\": [\"connect_state idempotent\", \"record_run/get_last_run roundtrip\", \"heartbeat roundtrip\", \"pause flags\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: tick_spawn (CLI spawner)",
+      "status": "completed",
+      "description": "**Goal:** Map tick name to existing CLI argv and spawn against a project graph.db. Never raises.\n\n**Files:** Create mcp-server/src/agentic_mcp/tick_spawn.py; Test mcp-server/tests/test_tick_spawn.py\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/tick_spawn.py\", \"mcp-server/tests/test_tick_spawn.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_tick_spawn.py -q\", \"acceptanceCriteria\": [\"TICK_COMMANDS only existing CLIs\", \"spawn_tick env+cwd+injectable runner\", \"unknown tick ok:false\", \"runner exception caught\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: scheduler_pass (supervisor core)",
+      "status": "completed",
+      "blockedBy": [1, 2, 3],
+      "description": "**Goal:** Pure stateless scheduler_pass firing due ticks for enabled/non-paused projects; never raises; injectable now+spawn_fn.\n\n**Files:** Create mcp-server/src/agentic_mcp/supervisor.py (scheduler_pass); Test mcp-server/tests/test_supervisor.py\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/supervisor.py\", \"mcp-server/tests/test_supervisor.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_supervisor.py -q\", \"acceptanceCriteria\": [\"fires due tick + records\", \"skips disabled/paused\", \"skips not-due\", \"failure -> errors, never raises\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: control_api (loopback http)",
+      "status": "completed",
+      "blockedBy": [2],
+      "description": "**Goal:** stdlib http.server on 127.0.0.1: GET /health, GET /projects, POST run-now, POST pause/resume.\n\n**Files:** Create mcp-server/src/agentic_mcp/control_api.py; Test mcp-server/tests/test_control_api.py\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/control_api.py\", \"mcp-server/tests/test_control_api.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_control_api.py -q\", \"acceptanceCriteria\": [\"/health + /projects\", \"pause/resume toggle\", \"run-now 202 triggers run_fn\", \"binds 127.0.0.1\"]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: daemon loop + CLI + console script",
+      "status": "completed",
+      "blockedBy": [4, 5],
+      "description": "**Goal:** run_once/run_forever wiring scheduler+heartbeat+control API; --once mode; agentic-supervisor console script.\n\n**Files:** Modify mcp-server/src/agentic_mcp/supervisor.py; Modify mcp-server/pyproject.toml; Test mcp-server/tests/test_supervisor_main.py\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/supervisor.py\", \"mcp-server/pyproject.toml\", \"mcp-server/tests/test_supervisor_main.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_supervisor_main.py -q\", \"acceptanceCriteria\": [\"run_once fires+beats\", \"main --once returns 0 + prints JSON\", \"console script registered\"]}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Windows keep-alive install script",
+      "status": "completed",
+      "blockedBy": [6],
+      "description": "**Goal:** install-supervisor.ps1 registering Task Scheduler (logon + restart + ensure-running), -Print dry-run, ASCII-only, parse-clean.\n\n**Files:** Create mcp-server/scripts/install-supervisor.ps1; Test mcp-server/tests/test_install_script.py\n\n```json:metadata\n{\"files\": [\"mcp-server/scripts/install-supervisor.ps1\", \"mcp-server/tests/test_install_script.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_install_script.py -q\", \"acceptanceCriteria\": [\"ASCII-only\", \"-Print switch + task name\", \"parse-check clean\"]}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: full-suite regression + example registry + HANDOFF",
+      "status": "completed",
+      "blockedBy": [0, 1, 2, 3, 4, 5, 6, 7],
+      "description": "**Goal:** Confirm full fast suite passes; ship example registry.json; smoke-test --once against this repo; HANDOFF note.\n\n**Files:** Create mcp-server/examples/registry.example.json; Modify docs/plans/HANDOFF.md\n\n```json:metadata\n{\"files\": [\"mcp-server/examples/registry.example.json\", \"docs/plans/HANDOFF.md\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest -m \\\"not llm\\\" -q\", \"acceptanceCriteria\": [\"full fast suite passes\", \"example registry exists\", \"--once smoke run works\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-05-25T18:00:00+00:00"
+}

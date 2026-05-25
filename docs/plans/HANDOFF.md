@@ -13,6 +13,14 @@ A self-improving engineering system packaged as a Claude Code plugin, dogfooded 
 - **Tests:** `199 passed, 9 deselected` (fast suite). Run FROM `mcp-server/`: `./.venv/Scripts/python.exe -m pytest -m "not llm" -q`. Live gate: `-m llm` (needs `claude` on PATH).
 - Phase 3 remaining: **sub-project B (architectural review)** = YOUR NEXT TASK, then sub-project C (cross-project meta-graph, deferrable - inert under default `isolated` scope).
 
+### Update 2026-05-25: always-on companion rung 0+1 landed (branch `feat/always-on-companion-vision`)
+
+- **Rung 0 (busy_timeout):** `db.connect` now sets `PRAGMA busy_timeout = 5000` explicitly (resolves the tracked follow-up below). Note: Python 3.12's `sqlite3.connect` already defaults `timeout=5.0`, so the value was effectively 5000 already; the explicit PRAGMA makes the intent durable.
+- **Rung 1 (supervisor daemon):** a logic-free scheduler that fires the EXISTING `orchestrate`/`pattern_finder` `--once` CLIs on per-project cadences from `~/.agentic/registry.json`, with ephemeral state in `~/.agentic/supervisor.db` and a `127.0.0.1` health/control API. New console script: **`agentic-supervisor`** (`--once` runs a single pass and prints JSON; no args = run-forever loop + control API on port 8787). New modules under `mcp-server/src/agentic_mcp/`: `supervisor_config.py`, `supervisor_state.py`, `tick_spawn.py`, `supervisor.py`, `control_api.py`. Windows keep-alive: `mcp-server/scripts/install-supervisor.ps1` (`-Print` dry-run). Example registry: `mcp-server/examples/registry.example.json`.
+- The supervisor adds NOTHING to tick logic - it shells out to the existing CLIs (`python -m agentic_mcp.orchestrate --once --repo <path>` with `AGENTIC_DB_PATH` set). Smoke-tested end to end against this repo: both ticks fired, zero errors.
+- **Tests:** `245 passed, 9 deselected` (199 prior + 46 new). Plan: `docs/superpowers/plans/2026-05-25-rung0-1-supervisor.md`.
+- **Remaining rungs 2-4** (HUD, approval gate, auto-rehydration) are unbuilt - see the vision doc `docs/superpowers/specs/2026-05-25-always-on-companion-vision-design.md`. Approve/decline/retry endpoints and `arch_review`/`promotion` tick CLIs are intentionally deferred to those rungs.
+
 ## YOUR NEXT TASK: brainstorm + build sub-project B (architectural review)
 
 Sub-project B is **NOT yet brainstormed**. Start with `superpowers-extended-cc:brainstorming` (there are real design forks below - do not skip to a plan). Then design spec -> `superpowers-extended-cc:writing-plans` -> `superpowers-extended-cc:subagent-driven-development` (see "Execution model" below for the dogfooding caveat).
@@ -67,7 +75,7 @@ A was built with `superpowers-extended-cc:subagent-driven-development`, NOT the 
 
 ## Tracked follow-up (not B-specific, but B may want it first)
 
-- **`PRAGMA busy_timeout` is NOT set in `db.connect`** (`mcp-server/src/agentic_mcp/db.py`). Cross-process DB contention (a headless agent's MCP-server connection vs the tick's connection) fails fast with `database is locked` instead of waiting. A worked around it with a `conn.commit()` barrier, but B will do more concurrent graph access; consider landing a small `PRAGMA busy_timeout` change in `db.connect` early. System-wide, so treat as its own small change/spec.
+- ~~**`PRAGMA busy_timeout` is NOT set in `db.connect`**~~ **RESOLVED 2026-05-25** (rung 0, see Update above): `db.connect` now sets `PRAGMA busy_timeout = 5000`. Cross-process contention now waits instead of failing fast with `database is locked`. (The `conn.commit()` barrier in `patterns.find_patterns_tick` is still load-bearing for read-after-write visibility and remains.)
 
 ## Process reference (how A was built, repeat for B)
 
