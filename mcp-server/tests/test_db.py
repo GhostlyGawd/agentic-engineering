@@ -63,6 +63,17 @@ def test_resolve_db_path_default_when_unset(tmp_path, monkeypatch):
     assert p.exists()
 
 
+def test_connect_sets_busy_timeout(tmp_db_path):
+    db.init_db(tmp_db_path)
+    conn = db.connect(tmp_db_path)
+    try:
+        # PRAGMA busy_timeout returns the current value in milliseconds.
+        (value,) = conn.execute("PRAGMA busy_timeout").fetchone()
+        assert value == 5000
+    finally:
+        conn.close()
+
+
 def test_resolve_db_path_existing_not_reinitialized(tmp_path, monkeypatch):
     """resolve_db_path does not destructively re-init existing DB."""
     target = tmp_path / "graph.db"
