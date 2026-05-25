@@ -1,84 +1,74 @@
-# Handoff - Agentic Engineering System, Phase 2.1 complete; next = headless build+review loop
+# Handoff - Phase 3 sub-project A (pattern-finder) complete; next = sub-project B (architectural review)
 
-> Paste-ready context for a fresh Claude Code session opened with `cwd = D:\GitHub Projects\Studies\Superpowers Study`. (Supersedes the Phase 2 handoff.)
+> Paste-ready context for a fresh Claude Code session opened with `cwd = D:\GitHub Projects\Studies\Superpowers Study`. Supersedes the headless-build-review-loop handoff (that work is merged).
 
 ## What this project is
 
-A self-improving engineering system packaged as a Claude Code plugin, dogfooded into its own repo. Upstream: `github.com/GhostlyGawd/agentic-engineering`. A typed SQLite knowledge graph (`./.agentic/graph.db`) backs everything; durable writes go through the bundled stdio MCP server (`agentic-graph`).
+A self-improving engineering system packaged as a Claude Code plugin, dogfooded into its own repo. Upstream: `github.com/GhostlyGawd/agentic-engineering`. A typed SQLite knowledge graph (`./.agentic/graph.db`) backs everything; durable writes go through the bundled stdio MCP server (`agentic-graph`). PRD: `agentic-engineering-system-prd-v3.md`. Phase 3 (Meta-Review) is decomposed in `docs/plans/2026-05-24-phase-3-decomposition.md`.
 
-## Current state (as of 2026-05-23)
+## Current state (as of 2026-05-24)
 
-- **Branch:** `main`. Phase 2 (PR #2) and **Phase 2.1** are both merged locally. Merge commit for 2.1 is `b3ec4b6` ("Merge Phase 2.1: orchestration hardening + headless loop design").
-- **`main` is AHEAD of `origin/main`** by the Phase 2.1 commits - it was a LOCAL merge, not yet pushed. Decide whether to `git push origin main` (no PR was used for 2.1).
-- **Tests:** `160 passed, 7 deselected` (fast suite). Run FROM `mcp-server/`: `./.venv/Scripts/python.exe -m pytest -m "not llm" -q`.
-- Phases 0, 1, 1.5, 2, 2.1 are done. Phase 3 (pattern-finder, periodic architectural review, `sqlite-vec`/vec0) is not started.
+- **Branch:** `main`, synced with `origin/main` at `97f3c87`. Phases 0, 1, 1.5, 2, 2.1, the headless build+review loop, and **Phase 3 sub-project A (pattern-finder)** are all merged.
+- **Phase 3 sub-project A merged via PR #3** (`fb63a60`). It delivers the `Pattern` half of the Phase 3 PRD exit gate ("one real Pattern produced and triaged"), live-validated.
+- **Tests:** `199 passed, 9 deselected` (fast suite). Run FROM `mcp-server/`: `./.venv/Scripts/python.exe -m pytest -m "not llm" -q`. Live gate: `-m llm` (needs `claude` on PATH).
+- Phase 3 remaining: **sub-project B (architectural review)** = YOUR NEXT TASK, then sub-project C (cross-project meta-graph, deferrable - inert under default `isolated` scope).
 
-## YOUR NEXT TASK: write the implementation plan for the headless build+review loop
+## YOUR NEXT TASK: brainstorm + build sub-project B (architectural review)
 
-The spec is written and APPROVED (brainstorming done). It is NOT yet planned or implemented.
+Sub-project B is **NOT yet brainstormed**. Start with `superpowers-extended-cc:brainstorming` (there are real design forks below - do not skip to a plan). Then design spec -> `superpowers-extended-cc:writing-plans` -> `superpowers-extended-cc:subagent-driven-development` (see "Execution model" below for the dogfooding caveat).
 
-- **Spec:** `docs/superpowers/specs/2026-05-23-headless-build-review-loop-design.md` - READ THIS FIRST.
-- **Next step:** invoke `superpowers-extended-cc:writing-plans` against that spec to produce `docs/plans/2026-05-23-headless-build-review-loop.md` (+ `.tasks.json`), then execute via `superpowers-extended-cc:subagent-driven-development`.
-- Do NOT re-brainstorm; the design decisions below are locked. Do NOT relitigate scope.
+### What B is (PRD Phase 3, top-down half)
 
-### Why this work exists (the gap it closes)
+The architectural-review layer hunts systemic/shape problems on a cadence, with an incentive isolated from shipping any single PR. PRD deliverables for B:
+- Architectural-review agent with cadence + incentive isolation.
+- Periodic alignment check against the original `Goal`.
+- Architectural-map tripwire.
+- Produces `ArchDebt` nodes (triaged).
 
-The orchestrator's headless `tick()` does NOT actually build or review yet:
-- `_real_launch` (orchestrate.py) sends every worker a GENERIC prompt ("implement the assigned task") with no task content and no graph read - workers build nothing meaningful.
-- `_real_review` is a STUB that returns `{"verdict": "CLEAN"}` unconditionally - nothing reviews the code before merge.
+**Exit gate B closes:** the `ArchDebt` half of the Phase 3 PRD exit gate ("one real ArchDebt produced and triaged"). A + B together satisfy the full Phase 3 exit gate except the conditional meta-graph clause (sub-project C).
 
-The Phase 2 e2e proved the MECHANISM (parallel `claude -p` workers in worktrees + claims + merge) but it overrode both seams with a hand-written prompt + stubbed review. This task makes the two seams real. It is the missing rung between Phase 2 (orchestration mechanism) and Phase 3 (meta-review), which the PRD assumed but never gated.
+### Reusable template: sub-project A is your blueprint
 
-### Locked design decisions (from the approved spec)
+A (pattern-finder, `mcp-server/src/agentic_mcp/patterns.py`) and the headless loop (`orchestrate.py`) already established the exact shape B should mirror:
+- **Pure deterministic core** + **injectable seam** (the only thing that touches `claude`, stubbed in the fast suite) + **never-raise single-tick driver** + **CLI** + **agent .md** + **command .md** + **`llm`-marked e2e**.
+- **Headless agent machinery (reuse, do not reimplement):** `headless.run_claude_headless(prompt, cwd, timeout=900, mcp_config=None)` (prompt via stdin; `bypassPermissions`), `headless.stage_mcp_config(project, db_path)`, `headless.claude_on_path()`. The staged-agents pattern: copy an agent `.md` into `<repo>/.claude/agents/` then run headless so the agent self-mints nodes via MCP - see `orchestrate._stage_review_agents`/`_real_review` and `patterns._stage_pattern_agent`/`_real_confirm`.
+- **Derive outcomes from the graph, never parse prose** (load-bearing repo lesson): the agent writes nodes via its own MCP connection; the tick re-reads the graph. NOTE the cross-process visibility fix: `conn.commit()` immediately before the post-headless read so the tick's connection sees the agent's committed rows (see `patterns.find_patterns_tick`).
+- **Triage lifecycle via free-text status** (no migration): A used `Pattern.status` open -> confirmed/dismissed + a `triage_pattern` MCP tool. B can do the same for `ArchDebt`.
 
-1. **Close the whole loop** - make BOTH `_real_launch` (real build) and `_real_review` (real review) real. You cannot meaningfully review code a generic prompt never built.
-2. **Reviewer = headless `/agentic:review-pr`, verdict from the graph.** `_real_review` spawns `claude -p "/agentic:review-pr <spec_id>"` in the worktree; that command IS the full four-role loop engine (spec-checker gate -> code-reviewer + contrarian -> builder loop-fix -> re-loop until clean/diminishing-returns). Then derive the verdict from the graph: any open Critical scoped to the spec -> NEEDS_FIXING, else CLEAN. Do NOT parse stdout.
-3. **Builder = graph-assembled task prompt.** A new pure helper `_build_builder_prompt(conn, task_id)` reads the Task body + parent Spec criteria (via the `implements` relation) and returns a builder-role prompt; `_real_launch` runs `claude -p <that prompt>`.
-4. **Thread-safety:** `headless.Pool` runs `launch_fn` in THREADS and sqlite3 connections are not thread-safe. So assemble prompts (and stage the mcp_config) in `tick()` (single-threaded, owns `conn`) BEFORE dispatch, and pass them into the job dict. `_real_review` runs in tick()'s single-threaded review phase, so it CAN use `conn`.
-5. **Error/timeout safety:** `_real_review` catches its own exceptions and returns NEEDS_FIXING (never merge unreviewed code); the Phase 2.1 retry cap then terminates a persistently unreviewable task after 3 strikes. Preserves tick()'s never-raise contract.
-6. **Assumptions (explicit):** one-task-per-spec as the reviewable unit (matches the existing e2e); LIVE-ONLY execution (fast suite keeps stubbing all seams; new behavior verified by an `llm`-marked e2e); workers run `--permission-mode bypassPermissions`; calibration `calibrate=False` for now (no ground truth at review time).
-7. **Two pure helpers are fast-unit-testable** (no `claude`): `_build_builder_prompt` (prompt contains task body + criteria) and `_verdict_from_graph(conn, spec_id)` (open Critical -> NEEDS_FIXING). Only the actual `claude -p` calls are live-only.
+### Substrate B reads/writes (already in the schema - likely NO migration needed)
 
-### Headless plumbing you will use (already exists in `headless.py`)
+- **`arch_debt` table already exists** (empty): columns `id, type(=ArchDebt), status, severity, owner, created_at, last_touched, body, summary, tags, scope`. `status` is free-text (no CHECK) - reuse for the triage lifecycle.
+- **Reads:** `goal`, `module`, `file` (these tables exist), `spec`, `decision`, and the `Pattern` nodes A now produces.
+- **Relations (valid types):** `observed-in`, `references`, `derived-from`, `supersedes`, `depends-on`, `caused-by`, `touches` - enough to link an `ArchDebt` to the modules/specs it spans and to the Patterns/findings that evidenced it. Link direction convention (from A): link FROM the new node TO its evidence, then read with `relations.neighbors(conn, node_id, "<rel>", "out")`.
+- **`nodes.create_node(conn, "ArchDebt", status=, owner=, body=, ...)`**, `nodes.get_node`, `nodes.update_node`, `relations.link_nodes`, `relations.neighbors` - same API A used.
 
-- `run_claude_headless(prompt, cwd, timeout=900, mcp_config=None) -> dict` - runs `claude -p ... --output-format json --permission-mode bypassPermissions`; kills the process tree on timeout.
-- `result_text(payload) -> str` - assistant's final text from the JSON payload.
-- `stage_mcp_config(project, db_path) -> Path` - writes a RESOLVED `.mcp.json` registering `agentic-graph` using `sys.executable`. THIS WORKS - the old "MCP never connected" memory was a different, bare-command config. Use this to give workers/reviewers graph access.
-- `Pool(max_workers).run(jobs, launch_fn)` - thread pool; `launch_fn` MUST catch its own exceptions and return a structured result (it must never raise into the Pool).
-- `tick()` will need the DB path to stage the mcp_config - thread it in (the CLI `main()` already has it via `db.resolve_db_path()`).
+### Design forks to resolve IN B's brainstorm (do not pre-decide)
 
-### Reusable assets
+1. **Cadence trigger:** time-based (every N days, cron/`/loop`-driven) vs event-based (every K merged tasks). The single-tick model supports either; B reads the trigger condition from the graph. (The whole system is stateless-single-tick + cadence-owned-externally - no daemons.)
+2. **Architectural-map tripwire - the highest-risk, least-specified piece.** What IS the "map" (a stored structural snapshot: module/dependency graph? a hash of some shape?) and what trips it (drift past a threshold)? This needs a concrete definition. Budget the most design time here.
+3. **Alignment-vs-Goal scoring:** how to detect drift from the original `Goal` without false alarms. What's the signal, what's the threshold, what does a "drift detected" output look like (a Finding? an ArchDebt? a non-blocking diagnostic)?
+4. **Reviewer incentive isolation:** the PRD stresses the arch-reviewer's only incentive is finding shape problems, not shipping. How is that encoded in the agent prompt (mirror the contrarian/code-reviewer asymmetry)?
+5. **Does B read A's Patterns?** B is more valuable consuming `Pattern` nodes (a recurring pattern often signals architectural debt), but it can ship reading raw findings/modules if needed. Decide the coupling.
 
-- Agents: `agents/builder.md`, `agents/code-reviewer.md`, `agents/contrarian.md`, `agents/spec-checker.md`.
-- Commands: `commands/dispatch.md` (spec-centric: validates + locks spec, kicks builder iter 1 - granularity mismatch with per-task worktrees, so prefer the graph-assembled prompt), `commands/review-pr.md` (the loop engine you run headless).
-- e2e patterns: `mcp-server/tests/test_phase2_e2e.py` - `_make_launch_fn` (concrete per-task prompt), `stage_mcp_config`, `_setup_git_repo`. Extend these for the new live e2e.
+### The dogfooding decision reopens at B (read before choosing execution)
 
-## Phase 2.1 - what just landed (context; do not redo)
+A was built with `superpowers-extended-cc:subagent-driven-development`, NOT the project's own headless orchestrator - because the orchestrator's reviewable unit is one-task-per-spec and it runs parallel disjoint-scope worktrees, which fights a sequential shared-file plan. See memory `phase3_execution_via_subagents_not_orchestrator`. If B's work can be shaped as **orthogonal one-spec-per-unit tasks**, B is a candidate to actually dogfood `orchestrate.tick` / the `launch-build` flow. Otherwise use subagent-driven-development again. Decide during planning.
 
-All merged in `b3ec4b6`. Spec: `docs/superpowers/specs/2026-05-23-phase-2.1-followups-design.md`. Plan: `docs/plans/2026-05-23-phase-2.1-orchestration-hardening.md`.
+## Conventions & gotchas (carry over from A)
 
-1. **Retry cap** - `NEEDS_FIXING` + launch/setup failures route through a per-task CriticalLoop (`_handle_failure`, linked via a `dispatch-failure` Finding with `parent_id==task_id`): reset to pending on strikes 1-2, escalate (status `escalated`) on the 3rd. The dispatch loop is resolved when a task is confirmed CLEAN (not just on merge), so the strike budget stays correct if the merge is skipped/fails.
-2. **Node-level weeding** - `tick()` surfaces `result["stale_nodes"]` (read-only ids). A stale Spec can appear in both `weeded` and `stale_nodes` (different signals).
-3. **`_db_path` dedup** - now `db.resolve_db_path()`; both CLIs use it.
-4. **Opt-in integration-branch enforcement** - `tick(integration_branch=...)` / CLI `--integration-branch NAME`: on HEAD mismatch, skip ALL merges + escalate each CLEAN task (claims held, tasks stay `in_progress`; needs an external reset - no self-healing).
-
-**Deferred follow-up (capstone #2, documented not implemented):** `result["escalations"]` holds two dict shapes - retry-cap `{task_id, reason, iterations}` (terminal, claim released) vs branch/merge `{task_id, error}` (held, recoverable). Consider a `kind`/`terminal` discriminator field.
-
-## Execution model (locked - do not relitigate)
-
-The graph IS the board. The orchestrator is STATELESS SINGLE-TICK (`/agentic:orchestrate --once`; `/loop` or cron owns the cadence) - each tick a fresh, graph-hydrated process. Ephemeral headless `claude -p ... --permission-mode bypassPermissions` workers/reviewers, one per orthogonal claimed task, isolated in git worktrees. Serial-when-shared via scope claims; DAG-ordered merge; trust-weighting calibration gates scheduling.
-
-## Repo conventions & gotchas
-
-- Windows + PowerShell 5.1. Venv python: `mcp-server/.venv/Scripts/python.exe`. RUN PYTEST FROM `mcp-server/`. Fast suite: `pytest -m "not llm"`. Live gate: `pytest -m llm` (needs the `claude` CLI on PATH).
-- Module style: `conn` first arg, `conn.commit()` after writes (reads need none), `_now()` = `datetime.now(timezone.utc).isoformat(timespec="seconds")`.
-- Relations table is `relations`; valid types include `implements` (Task->Spec) and `depends-on` (Task->prereq) - there is NO `belongs-to`/`blocked-by`. Use `relations.neighbors(conn, id, type, direction)`.
-- `finding` has `subtype` + `parent_id` (indexed); `critical_loop` has `finding_id`, `iteration_count` (DEFAULT 1), `diagnostic_fired_at`; `loops.DIAGNOSTIC_THRESHOLD == 3`. Statuses are free-text (no CHECK), so `escalated` is valid.
-- Migration constants named by SCHEMA VERSION (`_migrate_to_vN`, `SCHEMA_VERSION = 3`), not project phase.
-- ASCII-only inside `.ps1` / command-doc string literals (PS 5.1 cp1252 decoding). Avoid `2>&1` on native exes in PS 5.1 (stderr arrives wrapped as `RemoteException`, cosmetic).
+- **Run pytest FROM `mcp-server/`** with `./.venv/Scripts/python.exe`. Pure helpers are fast-unit-tested; only real `claude -p` calls are `llm`-marked and excluded from the default suite. The fast suite is the gate; the `llm` e2e is the exit-gate proof.
+- **Module style:** `conn` first arg; `nodes`/`relations` helpers `conn.commit()` internally. `_now()` = `datetime.now(timezone.utc).isoformat(timespec="seconds")`.
+- **Never-raise contract** for anything cron/`/loop`-driven (mirror `orchestrate.tick` / `find_patterns_tick`); a direct user/agent action (like a triage call) SHOULD raise on misuse.
+- **No new runtime dependency, prefer no schema migration** (A added neither). If B genuinely needs a new table/column, it's a `_migrate_to_v4` in `migrations.py` (next schema version is 4) - but check whether `arch_debt` + existing relations already suffice (they likely do).
+- **ASCII-only** in every source/agent/command string literal (PS 5.1 cp1252 gotcha). Verify new `.md` files with a byte-scan.
+- **Model preference:** dispatch subagent-driven implementers AND reviewers at `model: opus` (memory `subagent_model_opus`).
 - **Skill policy** (`CLAUDE.md`): only auto-invoke `superpowers-extended-cc` plugin skills in this repo. **Ignore `norns-loop-review/` entirely.**
-- **Model preference (user):** dispatch subagent-driven-development implementers AND reviewers with `model: opus`, not cheaper models - quality over cost, even for "mechanical" tasks.
+- **Git:** work on a feature branch off `main` (not a separate `.worktrees/` dir - the venv editable-install pins to the source path and subagents share the working dir; an in-place branch is the working isolation here). Two-stage review per task (spec compliance, then code quality), plus a final whole-implementation review, then `finishing-a-development-branch`.
 
-## How Phase 2 / 2.1 were built (process reference)
+## Tracked follow-up (not B-specific, but B may want it first)
 
-brainstorming -> writing-plans -> subagent-driven-development: a fresh implementer subagent per task (opus), two-stage review (spec compliance, then code quality) after each, then a final whole-implementation capstone review. The Phase 2.1 capstone caught a real strike-budget off-by-one at the retry-cap/branch-guard seam (fixed + test-covered before merge). Same pattern works for the headless loop and Phase 3. Verify reports by reading the diff - one implementer confabulated "already present" narration while actually doing the work correctly.
+- **`PRAGMA busy_timeout` is NOT set in `db.connect`** (`mcp-server/src/agentic_mcp/db.py`). Cross-process DB contention (a headless agent's MCP-server connection vs the tick's connection) fails fast with `database is locked` instead of waiting. A worked around it with a `conn.commit()` barrier, but B will do more concurrent graph access; consider landing a small `PRAGMA busy_timeout` change in `db.connect` early. System-wide, so treat as its own small change/spec.
+
+## Process reference (how A was built, repeat for B)
+
+brainstorming (resolve the forks above) -> design spec in `docs/superpowers/specs/YYYY-MM-DD-phase-3-arch-review-design.md` -> `writing-plans` -> `subagent-driven-development`: fresh implementer subagent per task (opus), two-stage review after each (spec compliance, then code quality), final whole-implementation review, then `finishing-a-development-branch` -> PR. Verify reports by reading the diff (one A implementer narrated correctly but reviews still caught a real cross-process-visibility gap and a `--scope ''` command-doc bug before merge - the review gates earn their keep).
