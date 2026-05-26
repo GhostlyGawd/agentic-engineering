@@ -1,0 +1,47 @@
+{
+  "planPath": "docs/superpowers/plans/2026-05-26-hud-rung2.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Packaging (hud subpackage + textual extra + console script)",
+      "status": "pending",
+      "description": "**Goal:** Create agentic_mcp.hud package + textual optional extra + agentic-hud console script; import agentic_mcp must not import textual.\n\n**Files:** Create src/agentic_mcp/hud/__init__.py; Modify pyproject.toml; Test tests/test_hud_packaging.py\n\n**Verify:** ./.venv/Scripts/python.exe -m pytest tests/test_hud_packaging.py -q\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/hud/__init__.py\", \"mcp-server/pyproject.toml\", \"mcp-server/tests/test_hud_packaging.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_hud_packaging.py -q\", \"acceptanceCriteria\": [\"import agentic_mcp does not import textual\", \"hud extra + agentic-hud script declared\"]}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: view_models.py (pure render models)",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Pure Textual-free dataclasses + functions (board_view, signals_view, task_sheet_view, overview_counts) built on existing read helpers.\n\n**Files:** Create src/agentic_mcp/hud/view_models.py; Test tests/test_hud_view_models.py\n\n**Verify:** ./.venv/Scripts/python.exe -m pytest tests/test_hud_view_models.py -q\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/hud/view_models.py\", \"mcp-server/tests/test_hud_view_models.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_hud_view_models.py -q\", \"acceptanceCriteria\": [\"board_view tree+levels\", \"signals_view degrades empty\", \"task_sheet_view full sheet\", \"overview_counts gated+escalation\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: graph_source.py (read-only conn + data_version probe)",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Per-project GraphSource: one persistent read-only (mode=ro, NOT via db.connect to avoid migration writes) connection + PRAGMA data_version change probe.\n\n**Files:** Create src/agentic_mcp/hud/graph_source.py; Test tests/test_hud_graph_source.py\n\n**Verify:** ./.venv/Scripts/python.exe -m pytest tests/test_hud_graph_source.py -q\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/hud/graph_source.py\", \"mcp-server/tests/test_hud_graph_source.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_hud_graph_source.py -q\", \"acceptanceCriteria\": [\"read-only mode=ro\", \"changed() flips once\", \"write raises\", \"missing DB raises\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: daemon_client.py (loopback control + offline sentinel)",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** DaemonClient wrapping rung-1 control API; DAEMON_OFFLINE sentinel on any failure; no approve/decline/retry.\n\n**Files:** Create src/agentic_mcp/hud/daemon_client.py; Test tests/test_hud_daemon_client.py\n\n**Verify:** ./.venv/Scripts/python.exe -m pytest tests/test_hud_daemon_client.py -q\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/hud/daemon_client.py\", \"mcp-server/tests/test_hud_daemon_client.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_hud_daemon_client.py -q\", \"acceptanceCriteria\": [\"port resolution\", \"live snapshot/run\", \"offline sentinel no-raise\", \"no gate methods\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Textual app + screens + refresh worker + launch context",
+      "status": "pending",
+      "blockedBy": [0, 1, 2, 3],
+      "description": "**Goal:** Thin Textual layer: AgenticHUD app, OverviewScreen + WorkspaceScreen, single 1.5s thread-worker refresh, __main__ launch-context resolution.\n\n**Files:** Create src/agentic_mcp/hud/{screens.py,app.py,__main__.py}; Test tests/test_hud_app.py (Pilot, async)\n\n**Verify:** ./.venv/Scripts/python.exe -m pytest tests/test_hud_app.py -q\n\nImplementer note: targets textual>=0.80; adapt widget construction (not structure) to pinned version if a symbol moved.\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/hud/screens.py\", \"mcp-server/src/agentic_mcp/hud/app.py\", \"mcp-server/src/agentic_mcp/hud/__main__.py\", \"mcp-server/tests/test_hud_app.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest tests/test_hud_app.py -q\", \"acceptanceCriteria\": [\"launch context\", \"board+filter\", \"offline degradation\", \"control wiring\", \"single timer worker\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: task_sheet.py (read-only drill-in modal)",
+      "status": "pending",
+      "blockedBy": [1, 4],
+      "description": "**Goal:** TaskSheet ModalScreen rendering task_sheet_view; rung-3 Approve/Decline/Retry buttons present but disabled; wire activation from WorkspaceScreen.\n\n**Files:** Create src/agentic_mcp/hud/task_sheet.py; Modify src/agentic_mcp/hud/screens.py; Test tests/test_hud_app.py (extend)\n\n**Verify:** ./.venv/Scripts/python.exe -m pytest -m \"not llm\" -q\n\n```json:metadata\n{\"files\": [\"mcp-server/src/agentic_mcp/hud/task_sheet.py\", \"mcp-server/src/agentic_mcp/hud/screens.py\", \"mcp-server/tests/test_hud_app.py\"], \"verifyCommand\": \"./.venv/Scripts/python.exe -m pytest -m \\\"not llm\\\" -q\", \"acceptanceCriteria\": [\"activation pushes sheet\", \"renders sheet\", \"gate buttons disabled\", \"no regressions\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-05-26T00:00:00Z"
+}
