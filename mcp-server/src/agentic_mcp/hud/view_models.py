@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from .. import nodes, queries, relations
 
 _BOARD_LEVELS = ("Goal", "Epic", "Task", "Subtask")
+_MAX_BOARD_DEPTH = 8
 
 
 @dataclass
@@ -41,22 +42,35 @@ class TaskSheetModel:
     reviews: list[dict]
 
 
-def _children_items(conn: sqlite3.Connection, parent_id: str) -> list[BoardItem]:
+def _children_items(conn: sqlite3.Connection, parent_id: str,
+                    seen: set[str] | None = None, depth: int = 0) -> list[BoardItem]:
     # Children point AT the parent via 'implements' (from_id=child, to_id=parent).
+    # graph.db is untrusted: the schema permits self-links/cycles, so a visited-set
+    # plus a depth cap prevent RecursionError (mirrors queries.walk_down).
+    if seen is None:
+        seen = set()
+    if depth >= _MAX_BOARD_DEPTH:
+        return []
     child_ids = relations.neighbors(conn, parent_id, relation_type="implements",
                                     direction="in")
     items = []
     for cid in child_ids:
+        if cid in seen:
+            continue
+        seen.add(cid)
         node = nodes.get_node(conn, cid)
         if node is None:
             continue
-        items.append(BoardItem(node=node, children=_children_items(conn, cid)))
+        items.append(BoardItem(node=node,
+                               children=_children_items(conn, cid, seen, depth + 1)))
     return items
 
 
 def board_view(conn: sqlite3.Connection) -> BoardModel:
-    goals = [BoardItem(node=g, children=_children_items(conn, g["id"]))
-             for g in queries.query_graph(conn, type="Goal", limit=200)]
+    goals = []
+    for g in queries.query_graph(conn, type="Goal", limit=200):
+        seen = {g["id"]}
+        goals.append(BoardItem(node=g, children=_children_items(conn, g["id"], seen)))
     by_level = {lvl: queries.query_graph(conn, type=lvl, limit=500)
                 for lvl in _BOARD_LEVELS}
     return BoardModel(goals=goals, by_level=by_level)

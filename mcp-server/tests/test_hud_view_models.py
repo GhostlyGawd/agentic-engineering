@@ -86,3 +86,29 @@ def test_overview_counts(conn):
     counts = vm.overview_counts(conn)
     assert counts["gated_count"] == 1
     assert counts["escalation_count"] == 1
+
+
+def test_board_view_survives_cyclic_implements(conn):
+    a = nodes.create_node(conn, "Goal", status="open", owner="t", body="A")
+    b = nodes.create_node(conn, "Epic", status="open", owner="t", body="B")
+    relations.link_nodes(conn, b, a, "implements")   # b implements a (normal)
+    relations.link_nodes(conn, a, b, "implements")   # a implements b (cycle!)
+    model = vm.board_view(conn)  # must return, not RecursionError
+    assert model.goals[0].node["id"] == a
+
+
+def test_signals_view_findings_only_backlog(conn):
+    parent = nodes.create_node(conn, "Task", status="pending", owner="t", body="p")
+    nodes.create_node(conn, "Finding", status="open", owner="t", body="keep",
+                      severity="Suggested", parent_id=parent, triage="backlog")
+    nodes.create_node(conn, "Finding", status="open", owner="t", body="drop",
+                      severity="Suggested", parent_id=parent, triage="fix-in-pr")
+    model = vm.signals_view(conn)
+    bodies = {f["body"] for f in model.findings}
+    assert bodies == {"keep"}
+
+
+def test_overview_counts_last_activity_present(conn):
+    nodes.create_node(conn, "Task", status="pending", owner="t", body="t1")
+    counts = vm.overview_counts(conn)
+    assert counts["last_activity"] is not None
