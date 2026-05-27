@@ -53,6 +53,7 @@ class OverviewScreen(Screen):
 
 class WorkspaceScreen(Screen):
     BINDINGS = [("escape", "to_overview", "Overview"),
+                ("enter", "open_selected", "Open task"),
                 ("r", "run_now", "Run now"),
                 ("space", "toggle_pause", "Pause/Resume")]
 
@@ -127,3 +128,12 @@ class WorkspaceScreen(Screen):
         if idx is None or idx >= len(self._rows):
             return None
         return self._rows[idx]["id"]
+
+    def action_open_selected(self) -> None:
+        task_id = self.selected_task_id()
+        if task_id is None:
+            return
+        from .task_sheet import TaskSheet
+        src = self.app.sources.get(self.path)
+        if src is not None:
+            self.app.push_screen(TaskSheet(src.conn, task_id))

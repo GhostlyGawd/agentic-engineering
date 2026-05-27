@@ -131,3 +131,19 @@ def test_build_sources_skips_missing_db(tmp_path):
     assert str((tmp_path / "absent").as_posix()) not in sources
     for s in sources.values():
         s.close()
+
+
+async def test_task_activation_opens_sheet_with_disabled_gate(registry, project):
+    from agentic_mcp.hud.task_sheet import TaskSheet
+    from textual.widgets import Button
+    app = AgenticHUD(registry=registry, daemon=FakeDaemon(),
+                     sources={project["path"]: GraphSource(project["db"])},
+                     start="workspace", active_path=project["path"])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.screen.action_open_selected()  # selects first Task row -> push sheet
+        await pilot.pause()
+        assert isinstance(app.screen, TaskSheet)
+        assert "Task A" in app.screen.sheet_text()
+        approve = app.screen.query_one("#approve", Button)
+        assert approve.disabled is True
