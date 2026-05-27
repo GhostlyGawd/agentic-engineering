@@ -16,11 +16,15 @@ dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.23",
 ]
+hud = [
+  "textual>=0.80",
+]
 
 [project.scripts]
 agentic-mcp = "agentic_mcp.server:main"
 agentic-mcp-init = "agentic_mcp.init_project:cli"
 agentic-supervisor = "agentic_mcp.supervisor:main"
+agentic-hud = "agentic_mcp.hud.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
