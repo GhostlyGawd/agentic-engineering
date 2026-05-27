@@ -147,3 +147,63 @@ async def test_task_activation_opens_sheet_with_disabled_gate(registry, project)
         assert "Task A" in app.screen.sheet_text()
         approve = app.screen.query_one("#approve", Button)
         assert approve.disabled is True
+
+
+async def test_task_sheet_formats_dict_criteria(tmp_path):
+    import json
+    from agentic_mcp import db, nodes, relations
+    from agentic_mcp.hud.graph_source import GraphSource
+    from agentic_mcp.hud.task_sheet import TaskSheet
+    p = tmp_path / "proj" / ".agentic" / "graph.db"
+    db.init_db(p)
+    c = db.connect(p)
+    task = nodes.create_node(c, "Task", status="pending", owner="t", body="T")
+    spec = nodes.create_node(c, "Spec", status="draft", owner="t", body="s",
+                             criteria_json=json.dumps([
+                                 {"text": "does the thing", "verify": "pytest", "satisfied": False},
+                                 {"text": "done bit", "verify": "pytest", "satisfied": True}]),
+                             feedback_loop="run tests")
+    relations.link_nodes(c, spec, task, "implements")
+    c.close()
+    src = GraphSource(p)
+    try:
+        sheet = TaskSheet(src.conn, task)
+        text = sheet.sheet_text()
+        assert "[ ] does the thing" in text
+        assert "[x] done bit" in text
+        assert "{'text'" not in text  # no raw dict repr
+    finally:
+        src.close()
+
+
+def test_task_sheet_handles_missing_task(tmp_path):
+    from agentic_mcp import db
+    from agentic_mcp.hud.graph_source import GraphSource
+    from agentic_mcp.hud.task_sheet import TaskSheet
+    p = tmp_path / "g.db"
+    db.init_db(p)
+    src = GraphSource(p)
+    try:
+        sheet = TaskSheet(src.conn, "does-not-exist")
+        assert "not found" in sheet.sheet_text().lower()
+    finally:
+        src.close()
+
+
+async def test_task_sheet_escape_returns_and_all_buttons_disabled(registry, project):
+    from agentic_mcp.hud.task_sheet import TaskSheet
+    from agentic_mcp.hud.screens import WorkspaceScreen
+    from textual.widgets import Button
+    app = AgenticHUD(registry=registry, daemon=FakeDaemon(),
+                     sources={project["path"]: GraphSource(project["db"])},
+                     start="workspace", active_path=project["path"])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.screen.action_open_selected()
+        await pilot.pause()
+        assert isinstance(app.screen, TaskSheet)
+        for bid in ("approve", "decline", "retry"):
+            assert app.screen.query_one(f"#{bid}", Button).disabled is True
+        app.screen.action_close()
+        await pilot.pause()
+        assert isinstance(app.screen, WorkspaceScreen)

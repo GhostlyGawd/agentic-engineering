@@ -12,6 +12,15 @@ from . import view_models as vm
 _RUNG3_NOTE = "Approve/Decline/Retry arrive in rung 3"
 
 
+def _crit_line(c):
+    """Format one criterion. Canonical shape is a dict
+    {text, verify, satisfied, evidence}; fall back to str for legacy data."""
+    if isinstance(c, dict):
+        mark = "x" if c.get("satisfied") else " "
+        return f"  [{mark}] {c.get('text', '')}"
+    return f"  - {c}"
+
+
 class TaskSheet(ModalScreen):
     BINDINGS = [("escape", "close", "Close")]
 
@@ -41,7 +50,8 @@ class TaskSheet(ModalScreen):
                  m.task.get("body") or "",
                  "",
                  "CRITERIA:"]
-        lines += [f"  - {c}" for c in m.criteria] or ["  (none)"]
+        crit_lines = [_crit_line(c) for c in m.criteria] or ["  (none)"]
+        lines += crit_lines
         lines += ["",
                   f"ORIGIN: {m.origin_signal['id'] if m.origin_signal else '(none)'}",
                   f"PARENT: {m.parent['id'] if m.parent else '(none)'}",
