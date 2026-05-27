@@ -85,3 +85,49 @@ async def test_run_now_invokes_daemon(registry, project):
         await pilot.pause()
         app.action_run_now()
         assert ("run", project["path"], "orchestrate") in fake.calls
+
+
+async def test_level_tab_narrows_board(registry, project):
+    from textual.widgets import Tabs
+    app = AgenticHUD(registry=registry, daemon=FakeDaemon(),
+                     sources={project["path"]: GraphSource(project["db"])},
+                     start="workspace", active_path=project["path"])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert "Task A" in app.screen.board_text()
+        assert "Goal A" not in app.screen.board_text()
+        app.screen.query_one(Tabs).active = "tab-Goal"
+        await pilot.pause()
+        assert "Goal A" in app.screen.board_text()
+        assert "Task A" not in app.screen.board_text()
+
+
+def test_find_project_root_walks_up(tmp_path):
+    from agentic_mcp.hud.__main__ import _find_project_root
+    from agentic_mcp import db
+    root = tmp_path / "proj"
+    db.init_db(root / ".agentic" / "graph.db")
+    nested = root / "a" / "b"
+    nested.mkdir(parents=True)
+    assert _find_project_root(nested) == root
+
+
+def test_find_project_root_bare_returns_none(tmp_path):
+    from agentic_mcp.hud.__main__ import _find_project_root
+    assert _find_project_root(tmp_path) is None
+
+
+def test_build_sources_skips_missing_db(tmp_path):
+    from agentic_mcp.hud.__main__ import _build_sources
+    from agentic_mcp import db
+    present = tmp_path / "present"
+    db.init_db(present / ".agentic" / "graph.db")
+    registry = {"projects": [
+        {"path": str(present.as_posix())},
+        {"path": str((tmp_path / "absent").as_posix())},
+    ]}
+    sources = _build_sources(registry)
+    assert str(present.as_posix()) in sources
+    assert str((tmp_path / "absent").as_posix()) not in sources
+    for s in sources.values():
+        s.close()
